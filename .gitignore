@@ -1,0 +1,10 @@
+# Build folders
+build/
+build-*/
+
+# Qt Creator user files
+CMakeLists.txt.user*
+*.autosave
+
+# Executables
+*.exe
