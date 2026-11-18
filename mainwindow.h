@@ -7,7 +7,7 @@
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QGraphicsRectItem>
-
+#include <QTimer>
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -17,6 +17,10 @@ private:
     QGraphicsScene *scene;
     QGraphicsView *view;
     QGraphicsRectItem *player;
+    QTimer *timer;
+
+private slots:
+    void updateGame();
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();

@@ -15,6 +15,10 @@ MainWindow::MainWindow(QWidget *parent)
     resize(820, 620);
 
     player->setBrush(Qt::yellow);
+
+    timer = new QTimer(this);
+    connect(timer, &QTimer::timeout, this, &MainWindow::updateGame);
+    timer->start(16);
 }
 
 MainWindow::~MainWindow() {
@@ -32,4 +36,17 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event){
     if (event->isAutoRepeat())return;
     pressedKeys.remove(event->key());
     qDebug() << pressedKeys;
+}
+
+void MainWindow::updateGame(){
+    const int speed = 5;   // pixels per frame
+    int dx = 0;
+    int dy = 0;
+
+    if (pressedKeys.contains(Qt::Key_W)) dy -= speed;   // up (Y grows downward)
+    if (pressedKeys.contains(Qt::Key_S)) dy += speed;   // down
+    if (pressedKeys.contains(Qt::Key_A)) dx -= speed;   // left
+    if (pressedKeys.contains(Qt::Key_D)) dx += speed;   // right
+
+    player->moveBy(dx, dy);
 }
