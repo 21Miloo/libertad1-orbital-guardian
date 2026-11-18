@@ -19,6 +19,15 @@ MainWindow::MainWindow(QWidget *parent)
     timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &MainWindow::updateGame);
     timer->start(16);
+
+    // create the obstacles
+    obstacles.append(scene->addRect(200, 150, 120, 40));
+    obstacles.append(scene->addRect(500, 100, 40, 200));
+    obstacles.append(scene->addRect(300, 400, 200, 50));
+
+    for (QGraphicsRectItem *obstacle : obstacles) {
+        obstacle->setBrush(Qt::gray);
+    }
 }
 
 MainWindow::~MainWindow() {
