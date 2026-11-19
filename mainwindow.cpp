@@ -30,14 +30,23 @@ MainWindow::MainWindow(QWidget *parent)
     }
 }
 
-MainWindow::~MainWindow() {
-
-}
+MainWindow::~MainWindow() {}
 
 void MainWindow::keyPressEvent(QKeyEvent *event){
     if (event->isAutoRepeat())return;
     pressedKeys.insert(event->key());
+
+    if (event->key() == Qt::Key_Space) {
+        Shot newShot;
+        newShot.body = scene->addEllipse(player->x() + 15, player->y() + 15, 10, 10);
+        newShot.body->setBrush(QColor(255, 140, 0));   // orange
+        newShot.velocityX = 8 * facingDirection;
+        newShot.velocityY = 0;
+        shots.append(newShot);
+    }
+
     qDebug() << pressedKeys;
+
 }
 
 
@@ -49,13 +58,29 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event){
 
 void MainWindow::updateGame(){
     const int speed = 5;   // pixels per frame
-    int dx = 0;
-    int dy = 0;
+    int moveX = 0;
+    int moveY = 0;
 
-    if (pressedKeys.contains(Qt::Key_W)) dy -= speed;   // up (Y grows downward)
-    if (pressedKeys.contains(Qt::Key_S)) dy += speed;   // down
-    if (pressedKeys.contains(Qt::Key_A)) dx -= speed;   // left
-    if (pressedKeys.contains(Qt::Key_D)) dx += speed;   // right
+    if (pressedKeys.contains(Qt::Key_W)) moveY -= speed;   // up (Y grows downward)
+    if (pressedKeys.contains(Qt::Key_S)) moveY += speed;   // down
+    if (pressedKeys.contains(Qt::Key_A)) moveX -= speed;   // left
+    if (pressedKeys.contains(Qt::Key_D)) moveX += speed;   // right
 
-    player->moveBy(dx, dy);
+    if (moveX > 0) facingDirection = 1;
+    if (moveX < 0) facingDirection = -1;
+
+    player->moveBy(moveX, moveY);
+
+    // move every shot; delete the ones that left the scene
+    // (backwards, so removing one doesn't skip the next)
+    for (int i = shots.size() - 1; i >= 0; i--) {
+        Shot &shot = shots[i];
+        shot.body->moveBy(shot.velocityX, shot.velocityY);
+
+        if (!scene->sceneRect().intersects(shot.body->sceneBoundingRect())) {
+            scene->removeItem(shot.body);
+            delete shot.body;
+            shots.removeAt(i);
+        }
+    }
 }

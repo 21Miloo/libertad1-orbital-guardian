@@ -10,9 +10,9 @@
 #include <QGraphicsEllipseItem>
 
 struct Shot {
-    QGraphicsEllipseItem *item;
-    double vx;
-    double vy;
+    QGraphicsEllipseItem *body;
+    double velocityX;
+    double velocityY;
 };
 
 class MainWindow : public QMainWindow
@@ -27,7 +27,7 @@ private:
     QTimer *timer;
     QList<QGraphicsRectItem*> obstacles;
     QList<Shot> shots;
-    int facing = 1;
+    int facingDirection = 1;   // 1 = right, -1 = left
 
 private slots:
     void updateGame();
