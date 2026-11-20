@@ -28,6 +28,7 @@ private:
     QList<QGraphicsRectItem*> obstacles;
     QList<Shot> shots;
     int facingDirection = 1;   // 1 = right, -1 = left
+    const double restitution = 0.4;   // e: energy shot vs metal furniture
 
 private slots:
     void updateGame();

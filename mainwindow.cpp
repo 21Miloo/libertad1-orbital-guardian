@@ -87,7 +87,31 @@ void MainWindow::updateGame(){
         Shot &shot = shots[i];
         shot.body->moveBy(shot.velocityX, shot.velocityY);
 
-        if (!scene->sceneRect().intersects(shot.body->sceneBoundingRect())) {
+        for (int j = 0; j < obstacles.size(); j++) {
+            if (shot.body->collidesWithItem(obstacles[j])) {
+                // 1. undo the move (get it out of the obstacle)
+                shot.body->moveBy(-shot.velocityX, -shot.velocityY);
+
+                // 2. which side did it hit? try moving only in X
+                shot.body->moveBy(shot.velocityX, 0);
+                bool hitLeftOrRight = shot.body->collidesWithItem(obstacles[j]);
+                shot.body->moveBy(-shot.velocityX, 0);   // undo the test
+
+                // 3. bounce: v⊥' = -e · v⊥   (the parallel one stays the same)
+                if (hitLeftOrRight) {
+                    shot.velocityX = -restitution * shot.velocityX;
+                } else {
+                    shot.velocityY = -restitution * shot.velocityY;
+                }
+                break;   // already bounced, no need to check the other obstacles
+            }
+        }
+
+        // delete it if it left the scene or is almost stopped (< 1 px per frame)
+        bool outOfScene = !scene->sceneRect().intersects(shot.body->sceneBoundingRect());
+        bool tooSlow = qAbs(shot.velocityX) < 1 && qAbs(shot.velocityY) < 1;
+
+        if (outOfScene || tooSlow) {
             scene->removeItem(shot.body);
             delete shot.body;
             shots.removeAt(i);
