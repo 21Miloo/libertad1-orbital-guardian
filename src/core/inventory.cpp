@@ -2,7 +2,6 @@
 #include <algorithm>
 
 
-
 // Constructor
 Inventory::Inventory() = default;
 
@@ -44,5 +43,36 @@ bool Inventory::isComplete() const{
 void Inventory:: reset(){
 
     collectedParts.fill(false);
+    unlockedUpgrades.fill(false);
 
 }
+
+
+// Metodos de mejora del jugador
+
+// Agrega la mejora a el arreglo inlockedUpgrades
+void Inventory::unlockUpgrade(PlayerUpgrade upgrade){
+
+    std::size_t index = static_cast<std::size_t>(upgrade);
+    unlockedUpgrades.at(index) = true;
+
+
+}
+
+// Verifica si tiene la mejora
+bool Inventory::hasUpgrade(PlayerUpgrade upgrade) const {
+
+    std::size_t index = static_cast<std::size_t>(upgrade);
+    bool value = unlockedUpgrades.at(index);
+
+    return value;
+
+}
+
+
+
+
+
+
+
+
