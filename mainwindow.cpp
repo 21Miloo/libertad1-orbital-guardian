@@ -28,6 +28,8 @@ MainWindow::MainWindow(QWidget *parent)
     for (QGraphicsRectItem *obstacle : obstacles) {
         obstacle->setBrush(Qt::gray);
     }
+
+
 }
 
 MainWindow::~MainWindow() {}
@@ -70,6 +72,14 @@ void MainWindow::updateGame(){
     if (moveX < 0) facingDirection = -1;
 
     player->moveBy(moveX, moveY);
+
+    for (QGraphicsRectItem *obstacle : obstacles) {
+        if (player->collidesWithItem(obstacle)) {
+            player->moveBy(-moveX, -moveY);
+        }
+    }
+
+
 
     // move every shot; delete the ones that left the scene
     // (backwards, so removing one doesn't skip the next)
