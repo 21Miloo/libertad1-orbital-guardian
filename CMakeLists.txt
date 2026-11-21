@@ -11,6 +11,7 @@ qt_standard_project_setup()
 # Cada vez que escribas una clase nueva, agrega aquí su .h y su .cpp
 qt_add_executable(libertad1 WIN32 MACOSX_BUNDLE
     src/main.cpp
+    src/mainwindow.h src/mainwindow.cpp
 
     src/core/inventory.h src/core/inventory.cpp
 
