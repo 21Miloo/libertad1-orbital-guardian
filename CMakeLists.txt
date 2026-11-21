@@ -1,39 +1,26 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.19)
 
-project(OrbitalGuardian VERSION 0.1 LANGUAGES CXX)
-
-set(CMAKE_AUTOUIC ON)
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
+project(Libertad1OrbitalGuardian VERSION 0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+qt_standard_project_setup()
 
-set(PROJECT_SOURCES
-    main.cpp
-    mainwindow.h
-    mainwindow.cpp
+# Cada vez que escribas una clase nueva, agrega aquí su .h y su .cpp
+qt_add_executable(libertad1 WIN32 MACOSX_BUNDLE
+    src/main.cpp
+    src/mainwindow.h src/mainwindow.cpp
+
+    src/core/inventory.h src/core/inventory.cpp
+
+
 )
 
-qt_add_executable(OrbitalGuardian
-    MANUAL_FINALIZATION
-    ${PROJECT_SOURCES}
-)
+target_include_directories(libertad1 PRIVATE src)
+target_link_libraries(libertad1 PRIVATE Qt6::Widgets)
 
-target_link_libraries(OrbitalGuardian PRIVATE Qt${QT_VERSION_MAJOR}::Widgets)
-
-set_target_properties(OrbitalGuardian PROPERTIES
-    WIN32_EXECUTABLE TRUE
-)
-
-include(GNUInstallDirs)
-install(TARGETS OrbitalGuardian
-    BUNDLE DESTINATION .
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
-
-qt_finalize_executable(OrbitalGuardian)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(libertad1 PRIVATE -Wall -Wextra -Wpedantic)
+endif()
