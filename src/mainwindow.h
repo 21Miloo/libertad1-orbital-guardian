@@ -31,7 +31,7 @@ private:
     const double restitution = 0.2;   // e: energy shot vs metal furniture
     const int floorTop = 300;
     const int floorBottom = 600;
-
+    QGraphicsEllipseItem *shadow;
 
 private slots:
     void updateGame();
