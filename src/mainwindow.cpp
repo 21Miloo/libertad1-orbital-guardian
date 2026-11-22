@@ -29,8 +29,8 @@ MainWindow::MainWindow(QWidget *parent)
     timer->start(16);
 
     // create the obstacles
-    obstacles.append(scene->addRect(200, 150, 120, 40));
-    obstacles.append(scene->addRect(500, 100, 40, 200));
+    obstacles.append(scene->addRect(150, 320, 120, 40));
+    obstacles.append(scene->addRect(600, 350, 40, 150));
     obstacles.append(scene->addRect(300, 400, 200, 50));
 
     for (QGraphicsRectItem *obstacle : obstacles) {
