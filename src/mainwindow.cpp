@@ -11,7 +11,12 @@ MainWindow::MainWindow(QWidget *parent)
     view = new QGraphicsView(scene,this);
     setCentralWidget(view);
 
+    scene->addRect(0, 0, 800, floorTop);
+    scene->addRect(0, floorTop, 800, floorBottom - floorTop);
+
     player = scene->addRect(0, 0, 40, 40);
+    player->setPos(100,450);
+    player->setTransformOriginPoint(20, 40);
     resize(820, 620);
 
     player->setBrush(Qt::yellow);
@@ -27,6 +32,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     for (QGraphicsRectItem *obstacle : obstacles) {
         obstacle->setBrush(Qt::gray);
+        obstacle->setZValue(obstacle->sceneBoundingRect().bottom());
     }
 
 
@@ -73,13 +79,30 @@ void MainWindow::updateGame(){
 
     player->moveBy(moveX, moveY);
 
+
+
+    // 2.5D: only the feet collide with the obstacle's footprint on the floor
+    QRectF body = player->sceneBoundingRect();
+    QRectF feetBox(body.left(), body.bottom() - 10, body.width(), 10);   // the last 10 px (his feet)
+
     for (QGraphicsRectItem *obstacle : obstacles) {
-        if (player->collidesWithItem(obstacle)) {
+        QRectF o = obstacle->sceneBoundingRect();
+        QRectF base(o.left(), o.bottom() - 15, o.width(), 15);   // the last 15 px (its footprint)
+
+        if (feetBox.intersects(base)) {
             player->moveBy(-moveX, -moveY);
+            break;   // undo only once
         }
     }
 
+    double feet = player->sceneBoundingRect().bottom();
+    if (feet < floorTop || feet > floorBottom) {
+        player->moveBy(-moveX, -moveY);
+    }
 
+    player->setZValue(feet);
+    double depth = (feet - floorTop) / (floorBottom - floorTop);   // 0 = back, 1 = front
+    player->setScale(0.7 + 0.3 * depth);
 
     // move every shot; delete the ones that left the scene
     // (backwards, so removing one doesn't skip the next)
