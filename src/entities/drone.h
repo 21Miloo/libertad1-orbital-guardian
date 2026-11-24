@@ -4,6 +4,9 @@
 #include <QGraphicsRectItem>
 #include <QGraphicsScene>
 #include <QGraphicsPolygonItem>
+
+enum DroneState { PATROL, CHASE };
+
 class Drone
 {
 private:
@@ -12,9 +15,10 @@ private:
     int leftLimit;
     int rightLimit;
     QGraphicsPolygonItem *vision;
+    DroneState state;
 public:
     Drone(QGraphicsScene *scene, int x, int y, int left, int right);
-    void updatePosition();
+    void updatePosition(QGraphicsItem *player);
     bool canSee(QGraphicsItem *target);
 };
 

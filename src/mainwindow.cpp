@@ -150,7 +150,7 @@ void MainWindow::updateGame(){
         }
     }
 
-    drone->updatePosition();
+    drone->updatePosition(player);
     if (drone->canSee(player)) player->setBrush(Qt::red);
     else player->setBrush(Qt::yellow);
 }
