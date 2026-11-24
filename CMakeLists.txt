@@ -14,6 +14,7 @@ qt_add_executable(libertad1 WIN32 MACOSX_BUNDLE
     src/mainwindow.h src/mainwindow.cpp
 
     src/core/inventory.h src/core/inventory.cpp
+    src/entities/drone.h src/entities/drone.cpp
 
 
 )

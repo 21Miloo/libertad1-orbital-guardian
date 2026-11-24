@@ -38,10 +38,13 @@ MainWindow::MainWindow(QWidget *parent)
         obstacle->setZValue(obstacle->sceneBoundingRect().bottom());
     }
 
+    drone = new Drone(scene, 300, 330, 200, 600);
 
 }
 
-MainWindow::~MainWindow() {}
+MainWindow::~MainWindow() {
+    delete drone;
+}
 
 void MainWindow::keyPressEvent(QKeyEvent *event){
     if (event->isAutoRepeat())return;
@@ -146,4 +149,8 @@ void MainWindow::updateGame(){
             shots.removeAt(i);
         }
     }
+
+    drone->updatePosition();
+    if (drone->canSee(player)) player->setBrush(Qt::red);
+    else player->setBrush(Qt::yellow);
 }

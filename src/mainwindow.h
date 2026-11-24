@@ -8,7 +8,7 @@
 #include <QGraphicsRectItem>
 #include <QTimer>
 #include <QGraphicsEllipseItem>
-
+#include "entities/drone.h"
 struct Shot {
     QGraphicsEllipseItem *body;
     double velocityX;
@@ -32,7 +32,7 @@ private:
     const int floorTop = 300;
     const int floorBottom = 600;
     QGraphicsEllipseItem *shadow;
-
+    Drone *drone;
 private slots:
     void updateGame();
 public:
