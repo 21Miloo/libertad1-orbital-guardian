@@ -17,6 +17,7 @@ qt_add_executable(libertad1 WIN32 MACOSX_BUNDLE
     src/core/constants.h
     src/core/vector2d.h src/core/vector2d.cpp
     src/core/orbitalphysics.h src/core/orbitalphysics.cpp
+    src/orbitwindow.h src/orbitwindow.cpp
 
 
 
