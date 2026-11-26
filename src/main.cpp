@@ -2,14 +2,19 @@
 #include <QDebug>
 #include <stdexcept>
 
+
 #include "core/orbitalphysics.h"
 #include "core/constants.h"
+#include "mainwindow.h"
+
 
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
 
-    // Aquí se va a crear y mostrar la ventana del juego
+    // Ventana del juego (nivel 1 de prueba: movimiento, disparos y rebote con e)
+    MainWindow window;
+    window.show();
 
     // ===== Prueba de OrbitalPhysics =====
     const double radius = 300.0;
