@@ -3,6 +3,8 @@
 
 #include <QPainter>
 #include <QPen>
+#include <QtMath>
+#include <cmath>
 
 // Constructor
 OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D(config:: WINDOW_WIDTH / 2.0, config::WINDOW_HEIGHT / 2.0),
@@ -39,6 +41,30 @@ OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D
 
     satellite = scene->addEllipse(-SATELLITE_RADIUS, -SATELLITE_RADIUS, 2 * SATELLITE_RADIUS, 2 * SATELLITE_RADIUS, Qt::NoPen, QColor(250, 200, 40));
     satellite->setPos(satellitePosition.x, satellitePosition.y);
+
+    // --- Línea de predicción ---
+    // Se crea antes que la nave y con Z menor para que quede dibujada debajo.
+    QPen trajectoryPen(QColor(120, 200, 255, 150)); // azul claro semitransparente
+    trajectoryPen.setWidthF(1.5);
+    trajectoryPen.setStyle(Qt::DashLine);
+    trajectory = scene->addPath(QPainterPath(), trajectoryPen, Qt::NoBrush);
+    trajectory->setZValue(-1);
+    trajectoryPath.reserve(PREDICTION_STEPS + 1); // reservar una sola vez: cero new por frame
+
+    // --- Nave de Bumblebee ---
+    // Triángulo centrado en el origen y apuntando a la derecha (ángulo 0).
+    // Así setRotation lo gira sobre su centro.
+    QPolygonF shipShape;
+    shipShape << QPointF(12, 0) << QPointF(-8, -7) << QPointF(-8, 7);
+    ship = scene->addPolygon(shipShape, Qt::NoPen, QColor(220, 220, 230));
+
+    // Arranca a la izquierda de la Tierra. Para girar en el mismo sentido que el
+    // satélite, a la izquierda la velocidad va hacia abajo (+y en pantalla).
+    shipPosition = Vector2D(centerX - SHIP_ORBIT_RADIUS, centerY);
+    shipVelocity = Vector2D(0.0, physics.circularSpeed(SHIP_ORBIT_RADIUS));
+
+    ship->setPos(shipPosition.x, shipPosition.y);
+    ship->setRotation(shipAngle); // apunta hacia abajo, en la dirección en que se mueve
 
 
     view = new QGraphicsView(scene, this);
@@ -79,11 +105,87 @@ void OrbitWindow::updateGame()
     accumulator += elapsed;
     while (accumulator >= config::DT) {
         physics.step(satellitePosition, satelliteVelocity, config::DT);
+
+        // Rotación de la nave: en pantalla, ángulo positivo = sentido horario
+        if (rotatingLeft)  shipAngle -= SHIP_ROTATION_SPEED * config::DT;
+        if (rotatingRight) shipAngle += SHIP_ROTATION_SPEED * config::DT;
+
+        // Empuje en la dirección a la que apunta la nave.
+        // cos/sin solo se calculan si el motor está encendido.
+        Vector2D thrust;
+        if (thrusting) {
+            const double radians = qDegreesToRadians(shipAngle);
+            thrust = Vector2D(std::cos(radians), std::sin(radians)) * SHIP_THRUST;
+        }
+
+        physics.step(shipPosition, shipVelocity, config::DT, thrust);
         accumulator -= config::DT;
     }
 
     // Dibujar una sola vez por tick, con la posición final
     satellite->setPos(satellitePosition.x, satellitePosition.y);
+    ship->setPos(shipPosition.x, shipPosition.y);
+    ship->setRotation(shipAngle);
+
+    updateTrajectory();
+}
+
+
+// Simula hacia adelante una copia de la nave (sin motor) y dibuja por dónde pasará.
+// Usa la misma física que el juego, así la línea nunca miente.
+// Costo: 120 pasos por frame (~7 200 por segundo), despreciable incluso en un PC viejo.
+void OrbitWindow::updateTrajectory()
+{
+    Vector2D position = shipPosition;   // copias: la nave real no se toca
+    Vector2D velocity = shipVelocity;
+
+    const double centerX = config::WINDOW_WIDTH / 2.0;
+    const double centerY = config::WINDOW_HEIGHT / 2.0;
+    const double earthRadius2 = EARTH_RADIUS * EARTH_RADIUS;
+
+    trajectoryPath.clear();
+    trajectoryPath.moveTo(position.x, position.y);
+
+    for (int i = 0; i < PREDICTION_STEPS; ++i) {
+        physics.step(position, velocity, PREDICTION_DT);
+
+        // ¿Choca con la Tierra? Se compara la distancia al cuadrado:
+        // da el mismo resultado sin calcular la raíz cuadrada
+        const double dx = position.x - centerX;
+        const double dy = position.y - centerY;
+        if (dx * dx + dy * dy < earthRadius2) break;
+
+        trajectoryPath.lineTo(position.x, position.y);
+    }
+
+    trajectory->setPath(trajectoryPath);
+}
+
+
+// Teclado: solo se cambian los bool. El movimiento lo hace updateGame,
+// así la nave responde igual sin importar la repetición automática del teclado.
+void OrbitWindow::keyPressEvent(QKeyEvent *event)
+{
+    if (event->isAutoRepeat()) return;
+
+    switch (event->key()) {
+    case Qt::Key_A: rotatingLeft = true;  break;
+    case Qt::Key_D: rotatingRight = true; break;
+    case Qt::Key_W: thrusting = true;     break;
+    default: QMainWindow::keyPressEvent(event); // otras teclas: comportamiento normal
+    }
+}
+
+void OrbitWindow::keyReleaseEvent(QKeyEvent *event)
+{
+    if (event->isAutoRepeat()) return;
+
+    switch (event->key()) {
+    case Qt::Key_A: rotatingLeft = false;  break;
+    case Qt::Key_D: rotatingRight = false; break;
+    case Qt::Key_W: thrusting = false;     break;
+    default: QMainWindow::keyReleaseEvent(event);
+    }
 }
 
 

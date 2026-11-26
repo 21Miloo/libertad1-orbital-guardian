@@ -11,9 +11,10 @@ Vector2D OrbitalPhysics::gravityAt(const Vector2D& position) const{
 }
 
 // Modifica la posicion y velocidad.
-void OrbitalPhysics::step(Vector2D& position, Vector2D& velocity, double dt) const {
+void OrbitalPhysics::step(Vector2D& position, Vector2D& velocity, double dt,
+                          const Vector2D& extraAcceleration) const {
 
-    velocity = velocity + gravityAt(position) * dt;
+    velocity = velocity + (gravityAt(position) + extraAcceleration) * dt;
     position = position + velocity * dt;
 
 }
