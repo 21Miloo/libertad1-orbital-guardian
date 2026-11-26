@@ -79,6 +79,15 @@ OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D
     setFixedSize(config:: WINDOW_WIDTH, config::WINDOW_HEIGHT); // El jugador no puede cambiar el tamaño de la ventana
     setWindowTitle(QStringLiteral("Libertad-1 · Nivel 2: Órbita")); // texto de la barra del titulo
 
+    // --- Pool de proyectiles ---
+    // Se crean todos de una vez, escondidos. Durante el juego solo se activan y desactivan.
+    for (Projectile &p : projectiles) {
+        p.item = scene->addEllipse(-PROJECTILE_RADIUS, -PROJECTILE_RADIUS,
+                                   2 * PROJECTILE_RADIUS, 2 * PROJECTILE_RADIUS,
+                                   Qt::NoPen, QColor(255, 140, 0)); // naranja
+        p.item->hide(); // un ítem escondido no se dibuja
+    }
+
     // Bucle del juego
     timer.setTimerType(Qt::PreciseTimer); // CoarseTimer puede atrasarse hasta un 5%
     connect(&timer, &QTimer::timeout, this, &OrbitWindow::updateGame);
@@ -119,6 +128,15 @@ void OrbitWindow::updateGame()
         }
 
         physics.step(shipPosition, shipVelocity, config::DT, thrust);
+
+        // Disparo continuo mientras se mantenga Espacio, con un tiempo mínimo entre tiros
+        if (fireCooldown > 0.0) fireCooldown -= config::DT;
+        if (firing && fireCooldown <= 0.0) {
+            fireProjectile();
+            fireCooldown = FIRE_COOLDOWN;
+        }
+
+        updateProjectiles(config::DT);
         accumulator -= config::DT;
     }
 
@@ -127,7 +145,66 @@ void OrbitWindow::updateGame()
     ship->setPos(shipPosition.x, shipPosition.y);
     ship->setRotation(shipAngle);
 
+    for (Projectile &p : projectiles) {
+        if (p.active) p.item->setPos(p.position.x, p.position.y);
+    }
+
     updateTrajectory();
+}
+
+
+// Activa el primer proyectil libre del pool. Si todos están en uso, no dispara.
+void OrbitWindow::fireProjectile()
+{
+    for (Projectile &p : projectiles) {
+        if (p.active) continue;
+
+        const double radians = qDegreesToRadians(shipAngle);
+        const Vector2D direction(std::cos(radians), std::sin(radians));
+
+        // Sale de la punta de la nave (12 px adelante del centro) y hereda
+        // la velocidad de la nave: física real, como disparar desde algo en movimiento
+        p.position = shipPosition + direction * 12.0;
+        p.velocity = shipVelocity + direction * PROJECTILE_SPEED;
+        p.lifetime = PROJECTILE_LIFETIME;
+        p.active = true;
+
+        p.item->setPos(p.position.x, p.position.y);
+        p.item->show();
+        return;
+    }
+}
+
+
+// Mueve los proyectiles activos con la misma gravedad y desactiva los que
+// chocan con la Tierra, salen de la pantalla o se les acaba el tiempo.
+void OrbitWindow::updateProjectiles(double dt)
+{
+    const double margin = 50.0; // px fuera de la pantalla antes de desactivarlo
+
+    for (Projectile &p : projectiles) {
+        if (!p.active) continue;
+
+        physics.step(p.position, p.velocity, dt);
+        p.lifetime -= dt;
+
+        const bool outOfScreen = p.position.x < -margin || p.position.x > config::WINDOW_WIDTH + margin
+                              || p.position.y < -margin || p.position.y > config::WINDOW_HEIGHT + margin;
+
+        if (p.lifetime <= 0.0 || outOfScreen || isInsideEarth(p.position)) {
+            p.active = false;
+            p.item->hide();
+        }
+    }
+}
+
+
+// Compara la distancia al cuadrado: mismo resultado sin calcular la raíz cuadrada
+bool OrbitWindow::isInsideEarth(const Vector2D &position)
+{
+    const double dx = position.x - EARTH_X;
+    const double dy = position.y - EARTH_Y;
+    return dx * dx + dy * dy < EARTH_RADIUS * EARTH_RADIUS;
 }
 
 
@@ -139,21 +216,13 @@ void OrbitWindow::updateTrajectory()
     Vector2D position = shipPosition;   // copias: la nave real no se toca
     Vector2D velocity = shipVelocity;
 
-    const double centerX = config::WINDOW_WIDTH / 2.0;
-    const double centerY = config::WINDOW_HEIGHT / 2.0;
-    const double earthRadius2 = EARTH_RADIUS * EARTH_RADIUS;
-
     trajectoryPath.clear();
     trajectoryPath.moveTo(position.x, position.y);
 
     for (int i = 0; i < PREDICTION_STEPS; ++i) {
         physics.step(position, velocity, PREDICTION_DT);
 
-        // ¿Choca con la Tierra? Se compara la distancia al cuadrado:
-        // da el mismo resultado sin calcular la raíz cuadrada
-        const double dx = position.x - centerX;
-        const double dy = position.y - centerY;
-        if (dx * dx + dy * dy < earthRadius2) break;
+        if (isInsideEarth(position)) break; // la línea se corta en el impacto
 
         trajectoryPath.lineTo(position.x, position.y);
     }
@@ -172,6 +241,7 @@ void OrbitWindow::keyPressEvent(QKeyEvent *event)
     case Qt::Key_A: rotatingLeft = true;  break;
     case Qt::Key_D: rotatingRight = true; break;
     case Qt::Key_W: thrusting = true;     break;
+    case Qt::Key_Space: firing = true;    break;
     default: QMainWindow::keyPressEvent(event); // otras teclas: comportamiento normal
     }
 }
@@ -184,6 +254,7 @@ void OrbitWindow::keyReleaseEvent(QKeyEvent *event)
     case Qt::Key_A: rotatingLeft = false;  break;
     case Qt::Key_D: rotatingRight = false; break;
     case Qt::Key_W: thrusting = false;     break;
+    case Qt::Key_Space: firing = false;    break;
     default: QMainWindow::keyReleaseEvent(event);
     }
 }

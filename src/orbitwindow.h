@@ -12,7 +12,10 @@
 #include <QElapsedTimer>
 #include <QKeyEvent>
 
+#include <array>
+
 #include "core/orbitalphysics.h"
+#include "core/constants.h"
 
 
 
@@ -34,6 +37,27 @@ private:
     // suficiente para ver hacia dónde va la nave sin llenar la pantalla
     static constexpr int PREDICTION_STEPS = 120;
     static constexpr double PREDICTION_DT = 1.0 / 30.0;  // s
+
+    // Centro de la Tierra = centro de la ventana
+    static constexpr double EARTH_X = config::WINDOW_WIDTH / 2.0;
+    static constexpr double EARTH_Y = config::WINDOW_HEIGHT / 2.0;
+
+    // Disparos
+    static constexpr int MAX_PROJECTILES = 32;           // tamaño del pool
+    static constexpr double PROJECTILE_SPEED = 220.0;    // px/s, relativo a la nave
+    static constexpr double PROJECTILE_LIFETIME = 4.0;   // s antes de desaparecer
+    static constexpr double PROJECTILE_RADIUS = 3.0;     // px
+    static constexpr double FIRE_COOLDOWN = 0.2;         // s entre disparos (5 por segundo)
+
+    // Un proyectil del pool. Se crean todos al iniciar; disparar es activar uno libre
+    // y desaparecer es desactivarlo. Cero new/delete durante el juego.
+    struct Projectile {
+        QGraphicsEllipseItem *item = nullptr;  // dueña: la escena
+        Vector2D position;
+        Vector2D velocity;
+        double lifetime = 0.0;   // s que le quedan
+        bool active = false;
+    };
 
 
     QGraphicsScene *scene;
@@ -57,6 +81,11 @@ private:
     bool rotatingLeft = false;   // A
     bool rotatingRight = false;  // D
     bool thrusting = false;      // W
+    bool firing = false;         // Espacio (mantener = disparo continuo)
+
+    // Pool de proyectiles: std::array de tamaño fijo, memoria contigua y sin heap
+    std::array<Projectile, MAX_PROJECTILES> projectiles;
+    double fireCooldown = 0.0;   // s que faltan para poder volver a disparar
 
     // Bucle del juego. Por valor: sin heap, se destruyen con la ventana
     QTimer timer;              // despierta al juego cada TICK_MS
@@ -64,6 +93,9 @@ private:
     double accumulator = 0.0;  // tiempo real pendiente de simular (s)
 
     void updateTrajectory();
+    void fireProjectile();
+    void updateProjectiles(double dt);
+    static bool isInsideEarth(const Vector2D &position);
 
 private slots:
     void updateGame();
