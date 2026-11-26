@@ -6,6 +6,7 @@
 #include "core/orbitalphysics.h"
 #include "core/constants.h"
 #include "mainwindow.h"
+#include "orbitwindow.h"
 
 
 int main(int argc, char *argv[])
@@ -13,8 +14,16 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
 
     // Ventana del juego (nivel 1 de prueba: movimiento, disparos y rebote con e)
-    MainWindow window;
+    //MainWindow window;
+    //window.show();
+
+
+    // Ventana del juego (nivel 2 de prueba)
+
+    OrbitWindow window;
     window.show();
+
+
 
     // ===== Prueba de OrbitalPhysics =====
     const double radius = 300.0;
