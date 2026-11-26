@@ -3,8 +3,10 @@
 #include <stdexcept>
 
 
-#include "core/inventory.h"
+#include "core/orbitalphysics.h"
+#include "core/constants.h"
 #include "mainwindow.h"
+
 
 int main(int argc, char *argv[])
 {
@@ -14,48 +16,35 @@ int main(int argc, char *argv[])
     MainWindow window;
     window.show();
 
-    // ===== Prueba de Inventory (temporal) =====
-    Inventory inventory;
+    // ===== Prueba de OrbitalPhysics =====
+    const double radius = 300.0;
+    const double period = 20.0;
 
-    qDebug() << "Al inicio:" << inventory.collectedCount() << "piezas";
+    // TÚ: calcula gm usando el método static gmForOrbit
+    double gm = OrbitalPhysics::gmForOrbit(radius, period);
 
-    // 1. TÚ: recoge 2 piezas distintas
-    //    (ej: Structure y PowerSystem)
+    // TÚ: crea el objeto OrbitalPhysics con centro (640, 360) y ese gm
+    OrbitalPhysics physics(Vector2D(640, 360), gm);
 
-    inventory.collectPart(SatellitePart:: Structure);
-    inventory.collectPart(SatellitePart:: PowerSystem);
+    // TÚ: posición inicial (centro + 300 en x) y velocidad inicial (0, -circularSpeed)
+    Vector2D position(640 + 300, 360);
+    Vector2D velocity(0, - physics.circularSpeed(radius));
 
+    const int totalSteps = static_cast<int>(period / config::DT);   // 2400
 
-    // 2. TÚ: imprime collectedCount() e isComplete()
-    //    (sigue el ejemplo del qDebug de arriba)
-    qDebug() << "Cantidad de " << inventory.collectedCount() << " piezas";
-    qDebug() << "¿Estan completas? : " << inventory.isComplete();
+    for (int i = 0; i <= totalSteps; ++i) {
+        // Cada 600 pasos (= 5 segundos) imprime el estado
+        if (i % 600 == 0) {
+            Vector2D fromCenter = position - Vector2D(640, 360);
+            qDebug() << "t =" << i * config::DT << "s"
+                     << " pos = (" << position.x << "," << position.y << ")"
+                     << " distancia =" << fromCenter.length();
+        }
 
+        // TÚ: avanza la física un paso con physics.step(...)
+        physics.step(position, velocity, config::DT);
 
-
-    // 3. TÚ: recoge OTRA VEZ una de las que ya tenías
-    //    e imprime collectedCount(). ¿Debería cambiar?
-    inventory.collectPart(SatellitePart:: Structure);
-    qDebug() << "Cantidad de " << inventory.collectedCount() << " piezas";
-
-    // 4. TÚ: imprime isCollected() de una pieza que SÍ recogiste
-    //    y de una que NO.
-    bool result = inventory.isCollected(SatellitePart::PowerSystem);
-    qDebug() << result;
-    result = inventory.isCollected(SatellitePart::PropulsionSystem);
-    qDebug() << result;
-
-
-
-    // 6. TÚ: llama reset() e imprime collectedCount()
-    inventory.reset();
-    inventory.collectedCount();
-
-    // ==========================================
-
-
-
-
+    }
 
     return app.exec();
 }
