@@ -19,7 +19,10 @@ public:
     Vector2D gravityAt(const Vector2D& position) const;
 
     // Modifica la posicion y velocidad.
-    void step(Vector2D& position, Vector2D& velocity, double dt) const;
+    // extraAcceleration: empuje del motor u otra fuerza aparte de la gravedad (px/s²).
+    // Por defecto (0, 0): el satélite y la basura solo sienten gravedad.
+    void step(Vector2D& position, Vector2D& velocity, double dt,
+              const Vector2D& extraAcceleration = Vector2D()) const;
 
     static double gmForOrbit(double radius, double period); // calcula el GM necesario para que una órbita de ese radio tarde ese periodo.
     // devuelve la velocidad circular del objeto
