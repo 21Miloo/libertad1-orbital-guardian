@@ -16,9 +16,14 @@
 #include <QColor>
 
 #include <array>
+#include <memory>
+#include <vector>
 
 #include "core/orbitalphysics.h"
 #include "core/constants.h"
+#include "objects/projectile.h"
+#include "objects/debris.h"
+#include "objects/drone.h"
 
 
 
@@ -47,14 +52,10 @@ private:
 
     // Disparos
     static constexpr int MAX_PROJECTILES = 32;           // tamaño del pool
-    static constexpr double PROJECTILE_SPEED = 220.0;    // px/s, relativo a la nave
-    static constexpr double PROJECTILE_LIFETIME = 4.0;   // s antes de desaparecer
-    static constexpr double PROJECTILE_RADIUS = 3.0;     // px
     static constexpr double FIRE_COOLDOWN = 0.2;         // s entre disparos (5 por segundo)
 
     // Basura espacial
     static constexpr int MAX_DEBRIS = 12;                 // tamaño del pool
-    static constexpr double DEBRIS_RADIUS = 10.0;         // px, tamaño de la roca y radio de choque
     static constexpr double DEBRIS_SPAWN_INTERVAL = 3.0;  // s entre apariciones
     static constexpr double DEBRIS_MIN_ORBIT = 240.0;     // px, cerca de la órbita del satélite
     static constexpr double DEBRIS_MAX_ORBIT = 360.0;     // px
@@ -62,46 +63,13 @@ private:
 
     // Drones de Soundwave
     static constexpr int MAX_DRONES = 6;                  // tamaño del pool
-    static constexpr double DRONE_RADIUS = 9.0;           // px
-    static constexpr double DRONE_MAX_SPEED = 110.0;      // px/s, algo más rápido que el satélite (~94)
-    static constexpr double DRONE_THRUST = 60.0;          // px/s², empuje máximo del motor
     static constexpr double DRONE_SPAWN_INTERVAL = 8.0;   // s entre apariciones
     static constexpr double DRONE_SPAWN_DISTANCE = 760.0; // px desde la Tierra: siempre fuera de pantalla
-    static constexpr int DRONE_HEALTH = 2;                // disparos que aguanta
-    static constexpr int DRONE_DAMAGE = 2;                // vida que le quita al satélite
 
     // Vida y choques
     static constexpr double SHIP_RADIUS = 9.0;            // px, círculo que envuelve el triángulo
     static constexpr int SATELLITE_MAX_HEALTH = 5;
     static constexpr int SHIP_MAX_HEALTH = 3;
-
-    // Un proyectil del pool. Se crean todos al iniciar; disparar es activar uno libre
-    // y desaparecer es desactivarlo. Cero new/delete durante el juego.
-    struct Projectile {
-        QGraphicsEllipseItem *item = nullptr;  // dueña: la escena
-        Vector2D position;
-        Vector2D velocity;
-        double lifetime = 0.0;   // s que le quedan
-        bool active = false;
-    };
-
-    // Un pedazo de basura del pool. Mismo patrón que los proyectiles,
-    // pero no tiene tiempo de vida: orbita hasta que choca con algo.
-    struct Debris {
-        QGraphicsPolygonItem *item = nullptr;  // dueña: la escena
-        Vector2D position;
-        Vector2D velocity;
-        bool active = false;
-    };
-
-    // Un dron del pool. A diferencia de la basura, tiene motor: busca al satélite.
-    struct Drone {
-        QGraphicsPolygonItem *item = nullptr;  // dueña: la escena
-        Vector2D position;
-        Vector2D velocity;
-        int health = 0;
-        bool active = false;
-    };
 
 
     QGraphicsScene *scene;
@@ -127,17 +95,21 @@ private:
     bool thrusting = false;      // W
     bool firing = false;         // Espacio (mantener = disparo continuo)
 
-    // Pool de proyectiles: std::array de tamaño fijo, memoria contigua y sin heap
-    std::array<Projectile, MAX_PROJECTILES> projectiles;
-    double fireCooldown = 0.0;   // s que faltan para poder volver a disparar
+    // Pools de objetos. Cada objeto se crea con new una sola vez al iniciar
+    // (memoria dinámica, necesaria para el polimorfismo) y vive hasta que se
+    // cierra la ventana. unique_ptr lo libera solo: sin delete a mano ni fugas.
+    std::array<std::unique_ptr<Projectile>, MAX_PROJECTILES> projectiles;
+    std::array<std::unique_ptr<Debris>, MAX_DEBRIS> debris;
+    std::array<std::unique_ptr<Drone>, MAX_DRONES> drones;
 
-    // Pool de basura espacial
-    std::array<Debris, MAX_DEBRIS> debris;
-    double debrisTimer = DEBRIS_SPAWN_INTERVAL;  // s que faltan para la siguiente
+    // Todos los objetos anteriores vistos como su clase base. No es dueño de nada:
+    // sirve para moverlos, dibujarlos y revisarlos contra la Tierra en un solo
+    // ciclo, sin importar de qué tipo sea cada uno (polimorfismo).
+    std::vector<SpaceObject*> spaceObjects;
 
-    // Pool de drones
-    std::array<Drone, MAX_DRONES> drones;
-    double droneTimer = DRONE_SPAWN_INTERVAL;    // s que faltan para el siguiente
+    double fireCooldown = 0.0;                   // s que faltan para poder volver a disparar
+    double debrisTimer = DEBRIS_SPAWN_INTERVAL;  // s que faltan para la siguiente basura
+    double droneTimer = DRONE_SPAWN_INTERVAL;    // s que faltan para el siguiente dron
 
     int satelliteHealth = SATELLITE_MAX_HEALTH;
     int shipHealth = SHIP_MAX_HEALTH;
@@ -156,12 +128,9 @@ private:
 
     void updateTrajectory();
     void fireProjectile();
-    void updateProjectiles(double dt);
     void spawnDebris();
-    void updateDebris(double dt);
     void spawnDrone();
-    void updateDrones(double dt);
-    Vector2D seekSatellite(const Drone &drone) const;
+    void updateSpawners(double dt);
     void checkCollisions();
     void damageSatellite(int amount = 1);
     void damageShip();
