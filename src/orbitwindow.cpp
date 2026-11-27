@@ -4,6 +4,7 @@
 #include <QPainter>
 #include <QPen>
 #include <QtMath>
+#include <QRandomGenerator>
 #include <cmath>
 
 // Constructor
@@ -57,14 +58,7 @@ OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D
     QPolygonF shipShape;
     shipShape << QPointF(12, 0) << QPointF(-8, -7) << QPointF(-8, 7);
     ship = scene->addPolygon(shipShape, Qt::NoPen, QColor(220, 220, 230));
-
-    // Arranca a la izquierda de la Tierra. Para girar en el mismo sentido que el
-    // satélite, a la izquierda la velocidad va hacia abajo (+y en pantalla).
-    shipPosition = Vector2D(centerX - SHIP_ORBIT_RADIUS, centerY);
-    shipVelocity = Vector2D(0.0, physics.circularSpeed(SHIP_ORBIT_RADIUS));
-
-    ship->setPos(shipPosition.x, shipPosition.y);
-    ship->setRotation(shipAngle); // apunta hacia abajo, en la dirección en que se mueve
+    resetShip(); // posición y velocidad iniciales (la misma función se usa al reaparecer)
 
 
     view = new QGraphicsView(scene, this);
@@ -86,6 +80,21 @@ OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D
                                    2 * PROJECTILE_RADIUS, 2 * PROJECTILE_RADIUS,
                                    Qt::NoPen, QColor(255, 140, 0)); // naranja
         p.item->hide(); // un ítem escondido no se dibuja
+    }
+
+    // --- Pool de basura espacial ---
+    // Forma de roca irregular, centrada en el origen. Todas comparten la forma,
+    // y al aparecer cada una se gira un ángulo al azar para que no se vean iguales.
+    // Los puntos están en proporción al radio: cambiar DEBRIS_RADIUS cambia
+    // el dibujo y el choque a la vez, así nunca quedan desiguales.
+    const double r = DEBRIS_RADIUS;
+    QPolygonF rockShape;
+    rockShape << QPointF(r, 0) << QPointF(0.45 * r, 0.85 * r) << QPointF(-0.55 * r, 0.85 * r)
+              << QPointF(-r, 0.15 * r) << QPointF(-0.55 * r, -0.85 * r) << QPointF(0.45 * r, -0.7 * r);
+
+    for (Debris &d : debris) {
+        d.item = scene->addPolygon(rockShape, Qt::NoPen, QColor(140, 130, 120)); // gris roca
+        d.item->hide();
     }
 
     // Bucle del juego
@@ -137,7 +146,11 @@ void OrbitWindow::updateGame()
         }
 
         updateProjectiles(config::DT);
+        updateDebris(config::DT);
+        checkCollisions();
         accumulator -= config::DT;
+
+        if (!timer.isActive()) break; // el juego terminó en este paso
     }
 
     // Dibujar una sola vez por tick, con la posición final
@@ -147,6 +160,10 @@ void OrbitWindow::updateGame()
 
     for (Projectile &p : projectiles) {
         if (p.active) p.item->setPos(p.position.x, p.position.y);
+    }
+
+    for (Debris &d : debris) {
+        if (d.active) d.item->setPos(d.position.x, d.position.y);
     }
 
     updateTrajectory();
@@ -199,12 +216,188 @@ void OrbitWindow::updateProjectiles(double dt)
 }
 
 
+// Activa un pedazo de basura libre en una órbita al azar.
+// Gira en sentido contrario al satélite para que sus caminos se crucen.
+void OrbitWindow::spawnDebris()
+{
+    for (Debris &d : debris) {
+        if (d.active) continue;
+
+        const double radius = randomRange(DEBRIS_MIN_ORBIT, DEBRIS_MAX_ORBIT);
+        double angle = randomRange(0.0, 2.0 * M_PI);
+        Vector2D direction(std::cos(angle), std::sin(angle));
+        Vector2D position = Vector2D(EARTH_X, EARTH_Y) + direction * radius;
+
+        // Si quedó muy cerca del satélite, se pasa al lado opuesto de la Tierra
+        if (circlesOverlap(position, SAFE_SPAWN_DISTANCE, satellitePosition, 0.0)) {
+            angle += M_PI;
+            direction = Vector2D(std::cos(angle), std::sin(angle));
+            position = Vector2D(EARTH_X, EARTH_Y) + direction * radius;
+        }
+
+        // Velocidad tangente: (-sin, cos) es el sentido contrario al satélite.
+        // Entre 90% y 105% de la velocidad circular: órbita un poco ovalada,
+        // así no todas se ven iguales.
+        const double speed = physics.circularSpeed(radius) * randomRange(0.90, 1.05);
+        d.position = position;
+        d.velocity = Vector2D(-direction.y, direction.x) * speed;
+        d.active = true;
+
+        d.item->setRotation(randomRange(0.0, 360.0)); // solo al aparecer, no cada frame
+        d.item->setPos(d.position.x, d.position.y);
+        d.item->show();
+        return;
+    }
+    // Pool lleno: no aparece nada hasta que se libere un espacio
+}
+
+
+// Mueve la basura activa y cuenta el tiempo para la siguiente.
+// La basura no se desactiva al salir de la pantalla: su órbita la trae de vuelta.
+void OrbitWindow::updateDebris(double dt)
+{
+    debrisTimer -= dt;
+    if (debrisTimer <= 0.0) {
+        spawnDebris();
+        debrisTimer = DEBRIS_SPAWN_INTERVAL;
+    }
+
+    for (Debris &d : debris) {
+        if (d.active) physics.step(d.position, d.velocity, dt);
+    }
+}
+
+
+// Revisa los choques del paso actual. Solo se comparan objetos activos.
+// Peor caso: 12 basuras x 32 disparos = 384 comparaciones, cada una son
+// 2 restas, 3 multiplicaciones y una suma. Sin raíces cuadradas.
+void OrbitWindow::checkCollisions()
+{
+    const Vector2D earthCenter(EARTH_X, EARTH_Y);
+
+    for (Debris &d : debris) {
+        if (!d.active) continue;
+
+        bool destroyed = false;
+
+        if (circlesOverlap(d.position, DEBRIS_RADIUS, earthCenter, EARTH_RADIUS)) {
+            destroyed = true; // se quema en la atmósfera
+        } else if (circlesOverlap(d.position, DEBRIS_RADIUS, satellitePosition, SATELLITE_RADIUS)) {
+            destroyed = true;
+            damageSatellite();
+        } else if (circlesOverlap(d.position, DEBRIS_RADIUS, shipPosition, SHIP_RADIUS)) {
+            destroyed = true;
+            damageShip();
+        } else {
+            for (Projectile &p : projectiles) {
+                if (!p.active) continue;
+                if (circlesOverlap(d.position, DEBRIS_RADIUS, p.position, PROJECTILE_RADIUS)) {
+                    p.active = false;
+                    p.item->hide();
+                    destroyed = true;
+                    break; // un disparo basta, no seguir revisando los demás
+                }
+            }
+        }
+
+        if (destroyed) {
+            d.active = false;
+            d.item->hide();
+        }
+    }
+
+    // La nave se estrella contra la Tierra: pierde vida y vuelve a su órbita inicial
+    if (circlesOverlap(shipPosition, SHIP_RADIUS, earthCenter, EARTH_RADIUS)) {
+        damageShip();
+        resetShip();
+    }
+}
+
+
+// El color del satélite pasa de amarillo a rojo según la vida que le queda.
+// Solo se cambia cuando recibe daño, no en cada frame.
+void OrbitWindow::damageSatellite()
+{
+    if (satelliteHealth <= 0) return;
+
+    --satelliteHealth;
+    satellite->setBrush(colorForHealth(QColor(250, 200, 40), satelliteHealth, SATELLITE_MAX_HEALTH));
+
+    if (satelliteHealth == 0) endGame();
+}
+
+
+void OrbitWindow::damageShip()
+{
+    if (shipHealth <= 0) return;
+
+    --shipHealth;
+    ship->setBrush(colorForHealth(QColor(220, 220, 230), shipHealth, SHIP_MAX_HEALTH));
+
+    if (shipHealth == 0) endGame();
+}
+
+
+// Pone la nave en su órbita inicial: a la izquierda de la Tierra. Para girar en el
+// mismo sentido que el satélite, a la izquierda la velocidad va hacia abajo (+y).
+void OrbitWindow::resetShip()
+{
+    shipPosition = Vector2D(EARTH_X - SHIP_ORBIT_RADIUS, EARTH_Y);
+    shipVelocity = Vector2D(0.0, physics.circularSpeed(SHIP_ORBIT_RADIUS));
+    shipAngle = 90.0; // apunta hacia abajo, en la dirección en que se mueve
+
+    ship->setPos(shipPosition.x, shipPosition.y);
+    ship->setRotation(shipAngle);
+}
+
+
+// Detiene el juego. Por ahora solo se avisa en el título;
+// cuando exista el HUD, aquí se mostrará la pantalla de derrota.
+void OrbitWindow::endGame()
+{
+    timer.stop();
+    setWindowTitle(QStringLiteral("Libertad-1 · Misión fallida"));
+}
+
+
 // Compara la distancia al cuadrado: mismo resultado sin calcular la raíz cuadrada
 bool OrbitWindow::isInsideEarth(const Vector2D &position)
 {
     const double dx = position.x - EARTH_X;
     const double dy = position.y - EARTH_Y;
     return dx * dx + dy * dy < EARTH_RADIUS * EARTH_RADIUS;
+}
+
+
+// Dos círculos se tocan si la distancia entre centros es menor que la suma de radios.
+// Se compara todo al cuadrado para no calcular la raíz.
+bool OrbitWindow::circlesOverlap(const Vector2D &a, double radiusA,
+                                 const Vector2D &b, double radiusB)
+{
+    const double dx = a.x - b.x;
+    const double dy = a.y - b.y;
+    const double radii = radiusA + radiusB;
+    return dx * dx + dy * dy < radii * radii;
+}
+
+
+// Número al azar en [min, max). QRandomGenerator es el generador de Qt:
+// mejor distribución que rand() de C y sin tener que sembrarlo a mano.
+double OrbitWindow::randomRange(double min, double max)
+{
+    return min + (max - min) * QRandomGenerator::global()->generateDouble();
+}
+
+
+// Mezcla el color sano con rojo: vida completa = color original, vida 0 = rojo.
+QColor OrbitWindow::colorForHealth(const QColor &healthy, int health, int maxHealth)
+{
+    const QColor damaged(220, 40, 40);
+    const double t = 1.0 - static_cast<double>(health) / maxHealth; // 0 = sano, 1 = destruido
+
+    return QColor(qRound(healthy.red()   + (damaged.red()   - healthy.red())   * t),
+                  qRound(healthy.green() + (damaged.green() - healthy.green()) * t),
+                  qRound(healthy.blue()  + (damaged.blue()  - healthy.blue())  * t));
 }
 
 

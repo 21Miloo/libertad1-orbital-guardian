@@ -11,6 +11,7 @@
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QKeyEvent>
+#include <QColor>
 
 #include <array>
 
@@ -49,6 +50,19 @@ private:
     static constexpr double PROJECTILE_RADIUS = 3.0;     // px
     static constexpr double FIRE_COOLDOWN = 0.2;         // s entre disparos (5 por segundo)
 
+    // Basura espacial
+    static constexpr int MAX_DEBRIS = 12;                 // tamaño del pool
+    static constexpr double DEBRIS_RADIUS = 10.0;         // px, tamaño de la roca y radio de choque
+    static constexpr double DEBRIS_SPAWN_INTERVAL = 3.0;  // s entre apariciones
+    static constexpr double DEBRIS_MIN_ORBIT = 240.0;     // px, cerca de la órbita del satélite
+    static constexpr double DEBRIS_MAX_ORBIT = 360.0;     // px
+    static constexpr double SAFE_SPAWN_DISTANCE = 150.0;  // px, no aparecer encima del satélite
+
+    // Vida y choques
+    static constexpr double SHIP_RADIUS = 9.0;            // px, círculo que envuelve el triángulo
+    static constexpr int SATELLITE_MAX_HEALTH = 5;
+    static constexpr int SHIP_MAX_HEALTH = 3;
+
     // Un proyectil del pool. Se crean todos al iniciar; disparar es activar uno libre
     // y desaparecer es desactivarlo. Cero new/delete durante el juego.
     struct Projectile {
@@ -56,6 +70,15 @@ private:
         Vector2D position;
         Vector2D velocity;
         double lifetime = 0.0;   // s que le quedan
+        bool active = false;
+    };
+
+    // Un pedazo de basura del pool. Mismo patrón que los proyectiles,
+    // pero no tiene tiempo de vida: orbita hasta que choca con algo.
+    struct Debris {
+        QGraphicsPolygonItem *item = nullptr;  // dueña: la escena
+        Vector2D position;
+        Vector2D velocity;
         bool active = false;
     };
 
@@ -87,6 +110,13 @@ private:
     std::array<Projectile, MAX_PROJECTILES> projectiles;
     double fireCooldown = 0.0;   // s que faltan para poder volver a disparar
 
+    // Pool de basura espacial
+    std::array<Debris, MAX_DEBRIS> debris;
+    double debrisTimer = DEBRIS_SPAWN_INTERVAL;  // s que faltan para la siguiente
+
+    int satelliteHealth = SATELLITE_MAX_HEALTH;
+    int shipHealth = SHIP_MAX_HEALTH;
+
     // Bucle del juego. Por valor: sin heap, se destruyen con la ventana
     QTimer timer;              // despierta al juego cada TICK_MS
     QElapsedTimer clock;       // mide el tiempo real entre ticks
@@ -95,7 +125,19 @@ private:
     void updateTrajectory();
     void fireProjectile();
     void updateProjectiles(double dt);
+    void spawnDebris();
+    void updateDebris(double dt);
+    void checkCollisions();
+    void damageSatellite();
+    void damageShip();
+    void resetShip();
+    void endGame();
+
     static bool isInsideEarth(const Vector2D &position);
+    static bool circlesOverlap(const Vector2D &a, double radiusA,
+                               const Vector2D &b, double radiusB);
+    static double randomRange(double min, double max);
+    static QColor colorForHealth(const QColor &healthy, int health, int maxHealth);
 
 private slots:
     void updateGame();
