@@ -5,7 +5,17 @@
 #include <QPen>
 #include <QtMath>
 #include <QRandomGenerator>
+#include <QFont>
 #include <cmath>
+
+// Colores que se usan en varias funciones. En un namespace sin nombre:
+// solo existen dentro de este .cpp y se construyen una sola vez al arrancar.
+namespace {
+const QColor SATELLITE_COLOR(250, 200, 40);  // amarillo
+const QColor SHIP_COLOR(220, 220, 230);      // gris claro
+const QColor HUD_TEXT_COLOR(200, 200, 210);
+const QColor BAR_EMPTY_COLOR(60, 60, 70);    // barrita de vida perdida
+}
 
 // Constructor
 OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D(config:: WINDOW_WIDTH / 2.0, config::WINDOW_HEIGHT / 2.0),
@@ -36,12 +46,8 @@ OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D
     earth->setPos(centerX, centerY);
 
     // --- Satelite ---
-    // Estado inicial: sobre la órbita, a la derecha, con velocidad circular hacia arriba
-    satellitePosition = Vector2D(centerX + ORBIT_RADIUS, centerY);
-    satelliteVelocity = Vector2D(0.0, -physics.circularSpeed(ORBIT_RADIUS));
-
-    satellite = scene->addEllipse(-SATELLITE_RADIUS, -SATELLITE_RADIUS, 2 * SATELLITE_RADIUS, 2 * SATELLITE_RADIUS, Qt::NoPen, QColor(250, 200, 40));
-    satellite->setPos(satellitePosition.x, satellitePosition.y);
+    satellite = scene->addEllipse(-SATELLITE_RADIUS, -SATELLITE_RADIUS, 2 * SATELLITE_RADIUS, 2 * SATELLITE_RADIUS, Qt::NoPen, SATELLITE_COLOR);
+    resetSatellite(); // estado inicial (la misma función se usa al reintentar)
 
     // --- Línea de predicción ---
     // Se crea antes que la nave y con Z menor para que quede dibujada debajo.
@@ -57,7 +63,7 @@ OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D
     // Así setRotation lo gira sobre su centro.
     QPolygonF shipShape;
     shipShape << QPointF(12, 0) << QPointF(-8, -7) << QPointF(-8, 7);
-    ship = scene->addPolygon(shipShape, Qt::NoPen, QColor(220, 220, 230));
+    ship = scene->addPolygon(shipShape, Qt::NoPen, SHIP_COLOR);
     resetShip(); // posición y velocidad iniciales (la misma función se usa al reaparecer)
 
 
@@ -96,6 +102,8 @@ OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D
         d.item = scene->addPolygon(rockShape, Qt::NoPen, QColor(140, 130, 120)); // gris roca
         d.item->hide();
     }
+
+    createHud();
 
     // Bucle del juego
     timer.setTimerType(Qt::PreciseTimer); // CoarseTimer puede atrasarse hasta un 5%
@@ -321,7 +329,8 @@ void OrbitWindow::damageSatellite()
     if (satelliteHealth <= 0) return;
 
     --satelliteHealth;
-    satellite->setBrush(colorForHealth(QColor(250, 200, 40), satelliteHealth, SATELLITE_MAX_HEALTH));
+    satellite->setBrush(colorForHealth(SATELLITE_COLOR, satelliteHealth, SATELLITE_MAX_HEALTH));
+    updateHealthBars();
 
     if (satelliteHealth == 0) endGame();
 }
@@ -332,7 +341,8 @@ void OrbitWindow::damageShip()
     if (shipHealth <= 0) return;
 
     --shipHealth;
-    ship->setBrush(colorForHealth(QColor(220, 220, 230), shipHealth, SHIP_MAX_HEALTH));
+    ship->setBrush(colorForHealth(SHIP_COLOR, shipHealth, SHIP_MAX_HEALTH));
+    updateHealthBars();
 
     if (shipHealth == 0) endGame();
 }
@@ -351,12 +361,132 @@ void OrbitWindow::resetShip()
 }
 
 
-// Detiene el juego. Por ahora solo se avisa en el título;
-// cuando exista el HUD, aquí se mostrará la pantalla de derrota.
+// Satélite sobre su órbita, a la derecha, con velocidad circular hacia arriba
+void OrbitWindow::resetSatellite()
+{
+    satellitePosition = Vector2D(EARTH_X + ORBIT_RADIUS, EARTH_Y);
+    satelliteVelocity = Vector2D(0.0, -physics.circularSpeed(ORBIT_RADIUS));
+    satellite->setPos(satellitePosition.x, satellitePosition.y);
+}
+
+
+// Detiene el juego y muestra el mensaje de derrota (ya estaba creado, solo se muestra)
 void OrbitWindow::endGame()
 {
     timer.stop();
-    setWindowTitle(QStringLiteral("Libertad-1 · Misión fallida"));
+    gameOverTitle->show();
+    gameOverHint->show();
+}
+
+
+// Vuelve todo al estado inicial sin crear nada nuevo: los pools se vacían
+// escondiendo sus ítems, igual que durante el juego.
+void OrbitWindow::restartGame()
+{
+    satelliteHealth = SATELLITE_MAX_HEALTH;
+    shipHealth = SHIP_MAX_HEALTH;
+    satellite->setBrush(SATELLITE_COLOR);
+    ship->setBrush(SHIP_COLOR);
+    updateHealthBars();
+
+    resetSatellite();
+    resetShip();
+
+    for (Projectile &p : projectiles) {
+        p.active = false;
+        p.item->hide();
+    }
+    for (Debris &d : debris) {
+        d.active = false;
+        d.item->hide();
+    }
+
+    fireCooldown = 0.0;
+    debrisTimer = DEBRIS_SPAWN_INTERVAL;
+    accumulator = 0.0;
+
+    gameOverTitle->hide();
+    gameOverHint->hide();
+
+    clock.restart();  // si no, el primer tick mediría todo el tiempo que estuvo detenido
+    timer.start(config::TICK_MS);
+}
+
+
+// Crea los elementos del HUD una sola vez. Z alto para que queden encima de todo.
+// QGraphicsSimpleTextItem en vez de QGraphicsTextItem: este último arma un
+// documento de texto enriquecido completo (QTextDocument), que aquí no se necesita.
+void OrbitWindow::createHud()
+{
+    const double hudZ = 10.0;
+    const double barsX = 110.0;   // donde empiezan las barritas
+    const double barWidth = 18.0;
+    const double barHeight = 8.0;
+    const double barGap = 4.0;
+
+    QFont labelFont;
+    labelFont.setPointSize(10);
+    labelFont.setBold(true);
+
+    // Etiquetas fijas: se escriben una vez y no vuelven a cambiar
+    QGraphicsSimpleTextItem *satelliteLabel = scene->addSimpleText(QStringLiteral("SATÉLITE"), labelFont);
+    satelliteLabel->setBrush(HUD_TEXT_COLOR);
+    satelliteLabel->setPos(20, 16);
+    satelliteLabel->setZValue(hudZ);
+
+    QGraphicsSimpleTextItem *shipLabel = scene->addSimpleText(QStringLiteral("NAVE"), labelFont);
+    shipLabel->setBrush(HUD_TEXT_COLOR);
+    shipLabel->setPos(20, 38);
+    shipLabel->setZValue(hudZ);
+
+    // Barritas de vida, alineadas con el centro de cada etiqueta
+    for (std::size_t i = 0; i < satelliteBars.size(); ++i) {
+        satelliteBars[i] = scene->addRect(0, 0, barWidth, barHeight, Qt::NoPen, SATELLITE_COLOR);
+        satelliteBars[i]->setPos(barsX + i * (barWidth + barGap), 21);
+        satelliteBars[i]->setZValue(hudZ);
+    }
+    for (std::size_t i = 0; i < shipBars.size(); ++i) {
+        shipBars[i] = scene->addRect(0, 0, barWidth, barHeight, Qt::NoPen, SHIP_COLOR);
+        shipBars[i]->setPos(barsX + i * (barWidth + barGap), 43);
+        shipBars[i]->setZValue(hudZ);
+    }
+
+    // Mensaje de derrota: se crea escondido y centrado en la ventana
+    QFont titleFont;
+    titleFont.setPointSize(32);
+    titleFont.setBold(true);
+
+    gameOverTitle = scene->addSimpleText(QStringLiteral("MISIÓN FALLIDA"), titleFont);
+    gameOverTitle->setBrush(QColor(220, 40, 40));
+    gameOverTitle->setPos((config::WINDOW_WIDTH - gameOverTitle->boundingRect().width()) / 2.0,
+                          config::WINDOW_HEIGHT / 2.0 - 140);
+    gameOverTitle->setZValue(hudZ);
+    gameOverTitle->hide();
+
+    QFont hintFont;
+    hintFont.setPointSize(12);
+
+    gameOverHint = scene->addSimpleText(QStringLiteral("Presiona R para reintentar"), hintFont);
+    gameOverHint->setBrush(HUD_TEXT_COLOR);
+    gameOverHint->setPos((config::WINDOW_WIDTH - gameOverHint->boundingRect().width()) / 2.0,
+                         config::WINDOW_HEIGHT / 2.0 - 85);
+    gameOverHint->setZValue(hudZ);
+    gameOverHint->hide();
+}
+
+
+// Las barritas que quedan se pintan llenas y las perdidas en gris oscuro.
+// Se llama solo cuando cambia la vida.
+void OrbitWindow::updateHealthBars()
+{
+    for (std::size_t i = 0; i < satelliteBars.size(); ++i) {
+        const bool full = static_cast<int>(i) < satelliteHealth;
+        satelliteBars[i]->setBrush(full ? SATELLITE_COLOR : BAR_EMPTY_COLOR);
+    }
+    for (std::size_t i = 0; i < shipBars.size(); ++i) {
+        const bool full = static_cast<int>(i) < shipHealth;
+        shipBars[i]->setBrush(full ? SHIP_COLOR : BAR_EMPTY_COLOR);
+    }
 }
 
 
@@ -435,6 +565,9 @@ void OrbitWindow::keyPressEvent(QKeyEvent *event)
     case Qt::Key_D: rotatingRight = true; break;
     case Qt::Key_W: thrusting = true;     break;
     case Qt::Key_Space: firing = true;    break;
+    case Qt::Key_R:
+        if (!timer.isActive()) restartGame(); // solo funciona con el juego detenido
+        break;
     default: QMainWindow::keyPressEvent(event); // otras teclas: comportamiento normal
     }
 }
