@@ -33,7 +33,7 @@ public:
 
 private:
     Vector2D center;              // centro de la Tierra
-    double learningRate;          // 0..1: qué tanto pesa cada experiencia nueva
+    double learningRate = 0.0;    // (0, 1]: peso de cada experiencia nueva
 
     Perception perception;
     std::array<double, SECTORS> weights;  // memoria: qué tan bueno ha sido cada sector
@@ -65,6 +65,12 @@ public:
     // Vuelve a la posición inicial. La memoria se conserva a propósito:
     // al reintentar, Soundwave recuerda cómo jugaste antes.
     void resetPosition();
+
+    // Prior uniforme: olvida todo lo aprendido
+    void resetMemory();
+
+    // Lanza invalid_argument fuera de (0, 1]
+    void setLearningRate(double rate);
 
     bool needsDecision() const { return decisionPending; }
     int getTargetSector() const { return targetSector; }

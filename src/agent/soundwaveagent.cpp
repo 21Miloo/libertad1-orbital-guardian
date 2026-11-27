@@ -5,13 +5,26 @@
 #include <stdexcept>
 
 SoundwaveAgent::SoundwaveAgent(const Vector2D &earthCenter, double learningRateValue)
-    : center(earthCenter), learningRate(learningRateValue)
+    : center(earthCenter)
 {
-    // Con 0 nunca aprendería; con más de 1 se pasaría del valor objetivo y oscilaría
-    if (learningRate <= 0.0 || learningRate > 1.0) {
+    setLearningRate(learningRateValue);
+    resetMemory();
+}
+
+
+void SoundwaveAgent::setLearningRate(double rate)
+{
+    // 0 no aprende; > 1 sobrepasa el objetivo y oscila
+    if (rate <= 0.0 || rate > 1.0) {
         throw std::invalid_argument("SoundwaveAgent: la tasa de aprendizaje debe estar en (0, 1]");
     }
-    weights.fill(1.0);  // al principio no prefiere ningún sector
+    learningRate = rate;
+}
+
+
+void SoundwaveAgent::resetMemory()
+{
+    weights.fill(1.0);
 }
 
 

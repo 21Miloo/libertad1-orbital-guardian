@@ -21,6 +21,7 @@
 
 #include "core/orbitalphysics.h"
 #include "core/constants.h"
+#include "core/difficulty.h"
 #include "objects/projectile.h"
 #include "objects/debris.h"
 #include "objects/drone.h"
@@ -62,9 +63,12 @@ private:
     static constexpr double DEBRIS_MAX_ORBIT = 360.0;     // px
     static constexpr double SAFE_SPAWN_DISTANCE = 150.0;  // px, no aparecer encima del satélite
 
-    // Drones y Soundwave
+    // Drones: su comportamiento lo define la dificultad
     static constexpr int MAX_DRONES = 6;                  // tamaño del pool
-    static constexpr double SOUNDWAVE_LEARNING_RATE = 0.3; // qué tan rápido aprende (0..1)
+
+    // Victoria por tiempo
+    static constexpr double TRANSMISSION_TIME = 90.0;     // s
+    static constexpr double TRANSMISSION_BAR_WIDTH = 300.0; // px
 
     // Vida y choques
     static constexpr double SHIP_RADIUS = 9.0;            // px, círculo que envuelve el triángulo
@@ -115,6 +119,16 @@ private:
     int satelliteHealth = SATELLITE_MAX_HEALTH;
     int shipHealth = SHIP_MAX_HEALTH;
 
+    // Máquina de estados: gobierna input y loop
+    enum class GameState { Menu, Playing, Over };
+    GameState state = GameState::Menu;
+
+    // Apunta a la tabla constexpr: cambiar de dificultad no copia nada
+    const DifficultySettings *difficulty = &settingsFor(Difficulty::Normal);
+
+    double transmissionTime = 0.0;  // s
+    int transmissionPercent = -1;   // caché del HUD; -1 invalida
+
     // HUD: una barrita por cada punto de vida. Se crean al iniciar y solo
     // cambian de color al recibir daño; no se crea ni se escribe texto por frame.
     std::array<QGraphicsRectItem*, SATELLITE_MAX_HEALTH> satelliteBars;
@@ -124,6 +138,14 @@ private:
     // se calcula una sola vez; después solo cambia el lápiz (grosor y color), y
     // solo cuando el agente decide o aprende, no cada frame.
     std::array<QGraphicsPathItem*, SoundwaveAgent::SECTORS> memoryArcs;
+    // HUD con dirty check: ~100 redibujos por partida, no por paso
+    QGraphicsRectItem *transmissionFill;
+    QGraphicsSimpleTextItem *transmissionLabel;
+    QGraphicsSimpleTextItem *difficultyLabel;
+
+    // Panel padre: un hide() apaga el menú entero; Qt libera los hijos
+    QGraphicsRectItem *menuPanel;
+
     QGraphicsSimpleTextItem *gameOverTitle;
     QGraphicsSimpleTextItem *gameOverHint;
 
@@ -143,10 +165,16 @@ private:
     void damageShip();
     void resetShip();
     void resetSatellite();
-    void endGame();
+    void updateTransmission(double dt);
+    void endGame(bool victory);
+    void startGame(Difficulty chosen);
     void restartGame();
+    void showMenu();
     void createHud();
+    void createMenu();
     void updateHealthBars();
+    void updateTransmissionHud();
+    void syncSoundwaveItem();
     void createMemoryArcs();
     void updateMemoryArcs();
 
