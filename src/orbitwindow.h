@@ -60,6 +60,16 @@ private:
     static constexpr double DEBRIS_MAX_ORBIT = 360.0;     // px
     static constexpr double SAFE_SPAWN_DISTANCE = 150.0;  // px, no aparecer encima del satélite
 
+    // Drones de Soundwave
+    static constexpr int MAX_DRONES = 6;                  // tamaño del pool
+    static constexpr double DRONE_RADIUS = 9.0;           // px
+    static constexpr double DRONE_MAX_SPEED = 110.0;      // px/s, algo más rápido que el satélite (~94)
+    static constexpr double DRONE_THRUST = 60.0;          // px/s², empuje máximo del motor
+    static constexpr double DRONE_SPAWN_INTERVAL = 8.0;   // s entre apariciones
+    static constexpr double DRONE_SPAWN_DISTANCE = 760.0; // px desde la Tierra: siempre fuera de pantalla
+    static constexpr int DRONE_HEALTH = 2;                // disparos que aguanta
+    static constexpr int DRONE_DAMAGE = 2;                // vida que le quita al satélite
+
     // Vida y choques
     static constexpr double SHIP_RADIUS = 9.0;            // px, círculo que envuelve el triángulo
     static constexpr int SATELLITE_MAX_HEALTH = 5;
@@ -81,6 +91,15 @@ private:
         QGraphicsPolygonItem *item = nullptr;  // dueña: la escena
         Vector2D position;
         Vector2D velocity;
+        bool active = false;
+    };
+
+    // Un dron del pool. A diferencia de la basura, tiene motor: busca al satélite.
+    struct Drone {
+        QGraphicsPolygonItem *item = nullptr;  // dueña: la escena
+        Vector2D position;
+        Vector2D velocity;
+        int health = 0;
         bool active = false;
     };
 
@@ -116,6 +135,10 @@ private:
     std::array<Debris, MAX_DEBRIS> debris;
     double debrisTimer = DEBRIS_SPAWN_INTERVAL;  // s que faltan para la siguiente
 
+    // Pool de drones
+    std::array<Drone, MAX_DRONES> drones;
+    double droneTimer = DRONE_SPAWN_INTERVAL;    // s que faltan para el siguiente
+
     int satelliteHealth = SATELLITE_MAX_HEALTH;
     int shipHealth = SHIP_MAX_HEALTH;
 
@@ -136,8 +159,11 @@ private:
     void updateProjectiles(double dt);
     void spawnDebris();
     void updateDebris(double dt);
+    void spawnDrone();
+    void updateDrones(double dt);
+    Vector2D seekSatellite(const Drone &drone) const;
     void checkCollisions();
-    void damageSatellite();
+    void damageSatellite(int amount = 1);
     void damageShip();
     void resetShip();
     void resetSatellite();

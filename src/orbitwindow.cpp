@@ -6,6 +6,7 @@
 #include <QtMath>
 #include <QRandomGenerator>
 #include <QFont>
+#include <algorithm>
 #include <cmath>
 
 // Colores que se usan en varias funciones. En un namespace sin nombre:
@@ -13,6 +14,7 @@
 namespace {
 const QColor SATELLITE_COLOR(250, 200, 40);  // amarillo
 const QColor SHIP_COLOR(220, 220, 230);      // gris claro
+const QColor DRONE_COLOR(150, 90, 220);      // morado, el color de Soundwave
 const QColor HUD_TEXT_COLOR(200, 200, 210);
 const QColor BAR_EMPTY_COLOR(60, 60, 70);    // barrita de vida perdida
 }
@@ -103,6 +105,18 @@ OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D
         d.item->hide();
     }
 
+    // --- Pool de drones ---
+    // Forma de flecha apuntando a la derecha (ángulo 0), como la nave,
+    // para poder girarla en la dirección en que se mueve.
+    QPolygonF droneShape;
+    droneShape << QPointF(10, 0) << QPointF(0, 7) << QPointF(-8, 4)
+               << QPointF(-8, -4) << QPointF(0, -7);
+
+    for (Drone &drone : drones) {
+        drone.item = scene->addPolygon(droneShape, Qt::NoPen, DRONE_COLOR);
+        drone.item->hide();
+    }
+
     createHud();
 
     // Bucle del juego
@@ -155,6 +169,7 @@ void OrbitWindow::updateGame()
 
         updateProjectiles(config::DT);
         updateDebris(config::DT);
+        updateDrones(config::DT);
         checkCollisions();
         accumulator -= config::DT;
 
@@ -172,6 +187,14 @@ void OrbitWindow::updateGame()
 
     for (Debris &d : debris) {
         if (d.active) d.item->setPos(d.position.x, d.position.y);
+    }
+
+    // Los drones apuntan hacia donde se mueven. atan2 se calcula aquí, una vez
+    // por frame, y no en cada paso de física: solo importa para el dibujo.
+    for (Drone &drone : drones) {
+        if (!drone.active) continue;
+        drone.item->setPos(drone.position.x, drone.position.y);
+        drone.item->setRotation(qRadiansToDegrees(std::atan2(drone.velocity.y, drone.velocity.x)));
     }
 
     updateTrajectory();
@@ -276,6 +299,65 @@ void OrbitWindow::updateDebris(double dt)
 }
 
 
+// Activa un dron libre fuera de la pantalla, en una dirección al azar.
+// Las esquinas de la ventana están a ~734 px del centro, así que un círculo
+// de 760 px queda completamente por fuera en cualquier dirección.
+void OrbitWindow::spawnDrone()
+{
+    for (Drone &drone : drones) {
+        if (drone.active) continue;
+
+        const double angle = randomRange(0.0, 2.0 * M_PI);
+        drone.position = Vector2D(EARTH_X, EARTH_Y)
+                       + Vector2D(std::cos(angle), std::sin(angle)) * DRONE_SPAWN_DISTANCE;
+        drone.velocity = Vector2D();  // arranca quieto; su motor lo acelera
+        drone.health = DRONE_HEALTH;
+        drone.active = true;
+
+        drone.item->setBrush(DRONE_COLOR);
+        drone.item->setPos(drone.position.x, drone.position.y);
+        drone.item->show();
+        return;
+    }
+}
+
+
+// Mueve los drones con gravedad + su motor, y cuenta el tiempo para el siguiente.
+void OrbitWindow::updateDrones(double dt)
+{
+    droneTimer -= dt;
+    if (droneTimer <= 0.0) {
+        spawnDrone();
+        droneTimer = DRONE_SPAWN_INTERVAL;
+    }
+
+    for (Drone &drone : drones) {
+        if (drone.active) physics.step(drone.position, drone.velocity, dt, seekSatellite(drone));
+    }
+}
+
+
+// "Seek steering": el dron calcula la velocidad que le gustaría tener (directo al
+// satélite a velocidad máxima) y empuja para corregir la diferencia con la que tiene.
+// El empuje está limitado, así que no gira en seco: se pasa, corrige y hace curvas.
+// Costo: 2 raíces cuadradas por dron y por paso.
+Vector2D OrbitWindow::seekSatellite(const Drone &drone) const
+{
+    const Vector2D toTarget = satellitePosition - drone.position;
+    const double distance = toTarget.length();
+    if (distance < 1e-6) return Vector2D();  // ya está encima: evita dividir entre cero
+
+    const Vector2D desired = toTarget * (DRONE_MAX_SPEED / distance);
+    Vector2D steering = desired - drone.velocity;
+
+    const double strength = steering.length();
+    if (strength > DRONE_THRUST) {
+        steering = steering * (DRONE_THRUST / strength);  // recortar al empuje máximo
+    }
+    return steering;
+}
+
+
 // Revisa los choques del paso actual. Solo se comparan objetos activos.
 // Peor caso: 12 basuras x 32 disparos = 384 comparaciones, cada una son
 // 2 restas, 3 multiplicaciones y una suma. Sin raíces cuadradas.
@@ -314,6 +396,43 @@ void OrbitWindow::checkCollisions()
         }
     }
 
+    // Drones: chocar con algo los destruye; un disparo solo les quita vida.
+    for (Drone &drone : drones) {
+        if (!drone.active) continue;
+
+        bool destroyed = false;
+
+        if (circlesOverlap(drone.position, DRONE_RADIUS, earthCenter, EARTH_RADIUS)) {
+            destroyed = true;
+        } else if (circlesOverlap(drone.position, DRONE_RADIUS, satellitePosition, SATELLITE_RADIUS)) {
+            destroyed = true;
+            damageSatellite(DRONE_DAMAGE);
+        } else if (circlesOverlap(drone.position, DRONE_RADIUS, shipPosition, SHIP_RADIUS)) {
+            destroyed = true;
+            damageShip();
+        } else {
+            for (Projectile &p : projectiles) {
+                if (!p.active) continue;
+                if (circlesOverlap(drone.position, DRONE_RADIUS, p.position, PROJECTILE_RADIUS)) {
+                    p.active = false;
+                    p.item->hide();
+
+                    --drone.health;
+                    destroyed = drone.health <= 0;
+                    if (!destroyed) {
+                        drone.item->setBrush(colorForHealth(DRONE_COLOR, drone.health, DRONE_HEALTH));
+                    }
+                    break;
+                }
+            }
+        }
+
+        if (destroyed) {
+            drone.active = false;
+            drone.item->hide();
+        }
+    }
+
     // La nave se estrella contra la Tierra: pierde vida y vuelve a su órbita inicial
     if (circlesOverlap(shipPosition, SHIP_RADIUS, earthCenter, EARTH_RADIUS)) {
         damageShip();
@@ -324,11 +443,11 @@ void OrbitWindow::checkCollisions()
 
 // El color del satélite pasa de amarillo a rojo según la vida que le queda.
 // Solo se cambia cuando recibe daño, no en cada frame.
-void OrbitWindow::damageSatellite()
+void OrbitWindow::damageSatellite(int amount)
 {
     if (satelliteHealth <= 0) return;
 
-    --satelliteHealth;
+    satelliteHealth = std::max(0, satelliteHealth - amount); // nunca por debajo de 0
     satellite->setBrush(colorForHealth(SATELLITE_COLOR, satelliteHealth, SATELLITE_MAX_HEALTH));
     updateHealthBars();
 
@@ -400,9 +519,14 @@ void OrbitWindow::restartGame()
         d.active = false;
         d.item->hide();
     }
+    for (Drone &drone : drones) {
+        drone.active = false;
+        drone.item->hide();
+    }
 
     fireCooldown = 0.0;
     debrisTimer = DEBRIS_SPAWN_INTERVAL;
+    droneTimer = DRONE_SPAWN_INTERVAL;
     accumulator = 0.0;
 
     gameOverTitle->hide();
