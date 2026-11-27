@@ -2,6 +2,7 @@
 
 #include <QtMath>
 #include <cmath>
+#include <stdexcept>
 
 namespace {
 const QColor DRONE_COLOR(150, 90, 220);    // morado, el color de Soundwave
@@ -33,6 +34,18 @@ void Drone::launch(const Vector2D &startPosition, int sector)
     originSector = sector;
     item->setBrush(DRONE_COLOR);
     activate(startPosition, Vector2D());  // arranca quieto; su motor lo acelera
+}
+
+
+// Fuera del hot path: solo al elegir dificultad
+void Drone::setPerformance(double maxSpeedValue, double thrustValue)
+{
+    // Invariante de seek(): ambos > 0
+    if (maxSpeedValue <= 0.0 || thrustValue <= 0.0) {
+        throw std::invalid_argument("Drone: la velocidad y el empuje deben ser positivos");
+    }
+    maxSpeed = maxSpeedValue;
+    thrust = thrustValue;
 }
 
 
@@ -73,12 +86,12 @@ Vector2D Drone::seek() const
     const double distance = toTarget.length();
     if (distance < 1e-6) return Vector2D();  // ya está encima: evita dividir entre cero
 
-    const Vector2D desired = toTarget * (MAX_SPEED / distance);
+    const Vector2D desired = toTarget * (maxSpeed / distance);
     Vector2D steering = desired - velocity;
 
     const double strength = steering.length();
-    if (strength > THRUST) {
-        steering = steering * (THRUST / strength);  // recortar al empuje máximo
+    if (strength > thrust) {
+        steering = steering * (thrust / strength);  // recortar al empuje máximo
     }
     return steering;
 }

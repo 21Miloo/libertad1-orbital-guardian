@@ -16,12 +16,13 @@ const QColor SATELLITE_COLOR(250, 200, 40);  // amarillo
 const QColor SHIP_COLOR(220, 220, 230);      // gris claro
 const QColor HUD_TEXT_COLOR(200, 200, 210);
 const QColor BAR_EMPTY_COLOR(60, 60, 70);    // barrita de vida perdida
+const QColor TRANSMISSION_COLOR(120, 200, 255);
 }
 
 // Constructor
 OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D(config:: WINDOW_WIDTH / 2.0, config::WINDOW_HEIGHT / 2.0),
               OrbitalPhysics::gmForOrbit(ORBIT_RADIUS, ORBIT_PERIOD)),
-              soundwave(Vector2D(EARTH_X, EARTH_Y), SOUNDWAVE_LEARNING_RATE) {
+              soundwave(Vector2D(EARTH_X, EARTH_Y), settingsFor(Difficulty::Normal).learningRate) {
 
     scene = new QGraphicsScene(this);
     scene->setItemIndexMethod(QGraphicsScene::NoIndex); //Optimizamos procesamiento -> Sin Arbol BSP
@@ -111,15 +112,15 @@ OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D
                    << QPointF(-18, 0) << QPointF(-12, -12) << QPointF(8, -12);
     soundwaveItem = scene->addPolygon(soundwaveShape, Qt::NoPen, QColor(110, 60, 180));
     soundwaveItem->setZValue(1);  // encima de la basura que pase por su órbita
+    syncSoundwaveItem();
 
     createHud();
+    createMenu();
+    updateTrajectory();  // escena completa detrás del menú
 
-    // Bucle del juego
+    // Loop conectado pero detenido: arranca en startGame
     timer.setTimerType(Qt::PreciseTimer); // CoarseTimer puede atrasarse hasta un 5%
     connect(&timer, &QTimer::timeout, this, &OrbitWindow::updateGame);
-    timer.start(config::TICK_MS);
-    clock.start();
-
 }
 
 
@@ -172,9 +173,13 @@ void OrbitWindow::updateGame()
         }
 
         checkCollisions();
+
+        // Derrota tiene prioridad sobre victoria en el mismo paso
+        if (state == GameState::Playing) updateTransmission(config::DT);
+
         accumulator -= config::DT;
 
-        if (!timer.isActive()) break; // el juego terminó en este paso
+        if (state != GameState::Playing) break;
     }
 
     // Dibujar una sola vez por tick, con la posición final
@@ -186,12 +191,27 @@ void OrbitWindow::updateGame()
         if (object->isActive()) object->syncGraphics();
     }
 
-    // Soundwave siempre mira hacia la Tierra (su ángulo + 180°)
+    syncSoundwaveItem();
+    updateTrajectory();
+}
+
+
+// +180°: siempre encara a la Tierra
+void OrbitWindow::syncSoundwaveItem()
+{
     const Vector2D soundwavePosition = soundwave.getPosition();
     soundwaveItem->setPos(soundwavePosition.x, soundwavePosition.y);
     soundwaveItem->setRotation(qRadiansToDegrees(soundwave.getAngle()) + 180.0);
+}
 
-    updateTrajectory();
+
+// Evento por tiempo: sobrevivir TRANSMISSION_TIME es la victoria
+void OrbitWindow::updateTransmission(double dt)
+{
+    transmissionTime = std::min(transmissionTime + dt, TRANSMISSION_TIME);
+    updateTransmissionHud();
+
+    if (transmissionTime >= TRANSMISSION_TIME) endGame(true);
 }
 
 
@@ -233,9 +253,9 @@ void OrbitWindow::spawnDebris()
         }
 
         // Velocidad tangente: (-sin, cos) es el sentido contrario al satélite.
-        // Entre 90% y 105% de la velocidad circular: órbita un poco ovalada,
-        // así no todas se ven iguales.
-        const double speed = physics.circularSpeed(radius) * randomRange(0.90, 1.05);
+        // Factor sobre v circular → excentricidad |f² - 1| (difficulty.h)
+        const double speed = physics.circularSpeed(radius)
+                             * randomRange(difficulty->debrisMinSpeed, difficulty->debrisMaxSpeed);
         rock->launch(position, Vector2D(-direction.y, direction.x) * speed, randomRange(0.0, 360.0));
         return;
     }
@@ -373,7 +393,7 @@ void OrbitWindow::damageSatellite(int amount)
     satellite->setBrush(colorForHealth(SATELLITE_COLOR, satelliteHealth, SATELLITE_MAX_HEALTH));
     updateHealthBars();
 
-    if (satelliteHealth == 0) endGame();
+    if (satelliteHealth == 0) endGame(false);
 }
 
 
@@ -385,7 +405,7 @@ void OrbitWindow::damageShip()
     ship->setBrush(colorForHealth(SHIP_COLOR, shipHealth, SHIP_MAX_HEALTH));
     updateHealthBars();
 
-    if (shipHealth == 0) endGame();
+    if (shipHealth == 0) endGame(false);
 }
 
 
@@ -411,12 +431,49 @@ void OrbitWindow::resetSatellite()
 }
 
 
-// Detiene el juego y muestra el mensaje de derrota (ya estaba creado, solo se muestra)
-void OrbitWindow::endGame()
+// Ítems precreados: solo cambia el texto, una vez por partida
+void OrbitWindow::endGame(bool victory)
 {
     timer.stop();
+    state = GameState::Over;
+
+    gameOverTitle->setText(victory ? QStringLiteral("MISIÓN CUMPLIDA") : QStringLiteral("MISIÓN FALLIDA"));
+    gameOverTitle->setBrush(victory ? QColor(80, 220, 120) : QColor(220, 40, 40));
+    gameOverTitle->setPos((config::WINDOW_WIDTH - gameOverTitle->boundingRect().width()) / 2.0,
+                          config::WINDOW_HEIGHT / 2.0 - 140);
     gameOverTitle->show();
     gameOverHint->show();
+}
+
+
+// Aplica la fila de dificultad. Fuera del hot path: recorrer el pool aquí no cuesta
+void OrbitWindow::startGame(Difficulty chosen)
+{
+    difficulty = &settingsFor(chosen);
+
+    soundwave.setLearningRate(difficulty->learningRate);
+    soundwave.resetMemory();  // nueva dificultad, memoria limpia
+
+    for (std::unique_ptr<Drone> &drone : drones) {
+        drone->setPerformance(difficulty->droneMaxSpeed, difficulty->droneThrust);
+    }
+
+    difficultyLabel->setText(QStringLiteral("DIFICULTAD: ") + QString::fromUtf8(difficulty->name));
+    difficultyLabel->setPos(config::WINDOW_WIDTH - 20.0 - difficultyLabel->boundingRect().width(), 16);
+
+    menuPanel->hide();
+    restartGame();
+}
+
+
+// Over → Menu
+void OrbitWindow::showMenu()
+{
+    timer.stop();
+    state = GameState::Menu;
+    gameOverTitle->hide();
+    gameOverHint->hide();
+    menuPanel->show();
 }
 
 
@@ -440,11 +497,17 @@ void OrbitWindow::restartGame()
     fireCooldown = 0.0;
     debrisTimer = DEBRIS_SPAWN_INTERVAL;
     soundwave.resetPosition();  // la memoria se conserva: recuerda la partida anterior
+    updateMemoryArcs();         // refleja un posible resetMemory
     accumulator = 0.0;
+
+    transmissionTime = 0.0;
+    transmissionPercent = -1;   // invalida la caché del HUD
+    updateTransmissionHud();
 
     gameOverTitle->hide();
     gameOverHint->hide();
 
+    state = GameState::Playing;
     clock.restart();  // si no, el primer tick mediría todo el tiempo que estuvo detenido
     timer.start(config::TICK_MS);
 }
@@ -488,27 +551,119 @@ void OrbitWindow::createHud()
         shipBars[i]->setZValue(hudZ);
     }
 
-    // Mensaje de derrota: se crea escondido y centrado en la ventana
+    // Transmisión: fondo fijo + relleno que crece
+    const double transmissionX = (config::WINDOW_WIDTH - TRANSMISSION_BAR_WIDTH) / 2.0;
+
+    QGraphicsRectItem *transmissionBack = scene->addRect(0, 0, TRANSMISSION_BAR_WIDTH, barHeight,
+                                                         Qt::NoPen, BAR_EMPTY_COLOR);
+    transmissionBack->setPos(transmissionX, 43);
+    transmissionBack->setZValue(hudZ);
+
+    transmissionFill = scene->addRect(0, 0, 0, barHeight, Qt::NoPen, TRANSMISSION_COLOR);
+    transmissionFill->setPos(transmissionX, 43);
+    transmissionFill->setZValue(hudZ);
+
+    transmissionLabel = scene->addSimpleText(QString(), labelFont);
+    transmissionLabel->setBrush(HUD_TEXT_COLOR);
+    transmissionLabel->setZValue(hudZ);
+    updateTransmissionHud();
+
+    // Texto asignado en startGame
+    difficultyLabel = scene->addSimpleText(QString(), labelFont);
+    difficultyLabel->setBrush(HUD_TEXT_COLOR);
+    difficultyLabel->setZValue(hudZ);
+
+    // Mensaje final: oculto hasta endGame
     QFont titleFont;
     titleFont.setPointSize(32);
     titleFont.setBold(true);
 
-    gameOverTitle = scene->addSimpleText(QStringLiteral("MISIÓN FALLIDA"), titleFont);
-    gameOverTitle->setBrush(QColor(220, 40, 40));
-    gameOverTitle->setPos((config::WINDOW_WIDTH - gameOverTitle->boundingRect().width()) / 2.0,
-                          config::WINDOW_HEIGHT / 2.0 - 140);
+    gameOverTitle = scene->addSimpleText(QString(), titleFont);
     gameOverTitle->setZValue(hudZ);
     gameOverTitle->hide();
 
     QFont hintFont;
     hintFont.setPointSize(12);
 
-    gameOverHint = scene->addSimpleText(QStringLiteral("Presiona R para reintentar"), hintFont);
+    gameOverHint = scene->addSimpleText(QStringLiteral("R: reintentar    M: cambiar dificultad"), hintFont);
     gameOverHint->setBrush(HUD_TEXT_COLOR);
     gameOverHint->setPos((config::WINDOW_WIDTH - gameOverHint->boundingRect().width()) / 2.0,
                          config::WINDOW_HEIGHT / 2.0 - 85);
     gameOverHint->setZValue(hudZ);
     gameOverHint->hide();
+}
+
+
+// Menú construido una vez. Ownership por parent de Qt: sin delete manual
+void OrbitWindow::createMenu()
+{
+    const double panelWidth = 720.0;
+    const double panelHeight = 330.0;
+    const double margin = 40.0;
+
+    QPen border(QColor(150, 90, 220));
+    border.setWidthF(2.0);
+    menuPanel = scene->addRect(0, 0, panelWidth, panelHeight, border, QColor(10, 10, 20, 225));
+    menuPanel->setPos((config::WINDOW_WIDTH - panelWidth) / 2.0,
+                      (config::WINDOW_HEIGHT - panelHeight) / 2.0);
+    menuPanel->setZValue(20.0);  // sobre el HUD
+
+    QFont titleFont;
+    titleFont.setPointSize(22);
+    titleFont.setBold(true);
+    QFont textFont;
+    textFont.setPointSize(11);
+    QFont optionFont = textFont;
+    optionFont.setBold(true);
+
+    // Coordenadas locales al panel; x < 0 = centrado
+    auto addText = [&](const QString &text, const QFont &font, const QColor &color,
+                       double x, double y) {
+        QGraphicsSimpleTextItem *item = new QGraphicsSimpleTextItem(text, menuPanel);
+        item->setFont(font);
+        item->setBrush(color);
+        if (x < 0.0) x = (panelWidth - item->boundingRect().width()) / 2.0;
+        item->setPos(x, y);
+    };
+
+    addText(QStringLiteral("NIVEL 2 · DEFENSA ORBITAL"), titleFont, QColor(220, 220, 230), -1, 24);
+    addText(QStringLiteral("Protege al satélite durante %1 s mientras transmite.")
+                .arg(TRANSMISSION_TIME), textFont, HUD_TEXT_COLOR, -1, 72);
+
+    // Nombres salen de la tabla: una sola fuente de verdad
+    const std::array<QString, 3> descriptions = {
+        QStringLiteral("Soundwave aprende lento, drones torpes, basura en órbitas casi circulares"),
+        QStringLiteral("Soundwave se adapta en pocos ataques, drones ágiles, órbitas algo ovaladas"),
+        QStringLiteral("Soundwave te lee rápido, drones certeros, basura que cruza todas las órbitas"),
+    };
+    const std::array<QColor, 3> colors = {
+        QColor(80, 220, 120), QColor(250, 200, 40), QColor(230, 80, 80)
+    };
+
+    for (std::size_t i = 0; i < DIFFICULTIES.size(); ++i) {
+        const double y = 120 + i * 48;
+        addText(QStringLiteral("[%1]  ").arg(i + 1) + QString::fromUtf8(DIFFICULTIES[i].name),
+                optionFont, colors[i], margin, y);
+        addText(descriptions[i], textFont, HUD_TEXT_COLOR, margin + 150, y);
+    }
+
+    addText(QStringLiteral("A/D girar    W motor    Espacio disparar"),
+            textFont, QColor(140, 140, 155), -1, panelHeight - 50);
+}
+
+
+// Dirty check por % entero: ~100 redibujos por partida contra 120 por segundo
+void OrbitWindow::updateTransmissionHud()
+{
+    const int percent = static_cast<int>(100.0 * transmissionTime / TRANSMISSION_TIME);
+    if (percent == transmissionPercent) return;
+    transmissionPercent = percent;
+
+    transmissionFill->setRect(0, 0, TRANSMISSION_BAR_WIDTH * percent / 100.0,
+                              transmissionFill->rect().height());
+
+    transmissionLabel->setText(QStringLiteral("TRANSMISIÓN  %1%").arg(percent));
+    transmissionLabel->setPos((config::WINDOW_WIDTH - transmissionLabel->boundingRect().width()) / 2.0, 16);
 }
 
 
@@ -652,9 +807,14 @@ void OrbitWindow::keyPressEvent(QKeyEvent *event)
     case Qt::Key_D: rotatingRight = true; break;
     case Qt::Key_W: thrusting = true;     break;
     case Qt::Key_Space: firing = true;    break;
-    case Qt::Key_R:
-        if (!timer.isActive()) restartGame(); // solo funciona con el juego detenido
-        break;
+
+    // Teclas de menú, filtradas por estado
+    case Qt::Key_1: if (state == GameState::Menu) startGame(Difficulty::Easy);   break;
+    case Qt::Key_2: if (state == GameState::Menu) startGame(Difficulty::Normal); break;
+    case Qt::Key_3: if (state == GameState::Menu) startGame(Difficulty::Hard);   break;
+    case Qt::Key_R: if (state == GameState::Over) restartGame(); break;
+    case Qt::Key_M: if (state == GameState::Over) showMenu();    break;
+
     default: QMainWindow::keyPressEvent(event); // otras teclas: comportamiento normal
     }
 }
