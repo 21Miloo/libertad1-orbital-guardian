@@ -19,6 +19,10 @@ qt_add_executable(libertad1 WIN32 MACOSX_BUNDLE
     src/core/orbitalphysics.h src/core/orbitalphysics.cpp
     src/orbitwindow.h src/orbitwindow.cpp
 
+    src/objects/spaceobject.h src/objects/spaceobject.cpp
+    src/objects/projectile.h src/objects/projectile.cpp
+    src/objects/debris.h src/objects/debris.cpp
+    src/objects/drone.h src/objects/drone.cpp
 
 
 )

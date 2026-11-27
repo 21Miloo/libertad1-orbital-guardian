@@ -14,7 +14,6 @@
 namespace {
 const QColor SATELLITE_COLOR(250, 200, 40);  // amarillo
 const QColor SHIP_COLOR(220, 220, 230);      // gris claro
-const QColor DRONE_COLOR(150, 90, 220);      // morado, el color de Soundwave
 const QColor HUD_TEXT_COLOR(200, 200, 210);
 const QColor BAR_EMPTY_COLOR(60, 60, 70);    // barrita de vida perdida
 }
@@ -81,40 +80,24 @@ OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D
     setFixedSize(config:: WINDOW_WIDTH, config::WINDOW_HEIGHT); // El jugador no puede cambiar el tamaño de la ventana
     setWindowTitle(QStringLiteral("Libertad-1 · Nivel 2: Órbita")); // texto de la barra del titulo
 
-    // --- Pool de proyectiles ---
-    // Se crean todos de una vez, escondidos. Durante el juego solo se activan y desactivan.
-    for (Projectile &p : projectiles) {
-        p.item = scene->addEllipse(-PROJECTILE_RADIUS, -PROJECTILE_RADIUS,
-                                   2 * PROJECTILE_RADIUS, 2 * PROJECTILE_RADIUS,
-                                   Qt::NoPen, QColor(255, 140, 0)); // naranja
-        p.item->hide(); // un ítem escondido no se dibuja
+    // --- Pools de objetos ---
+    // Cada objeto se crea con new (make_unique) una sola vez, aquí, escondido.
+    // Durante el juego solo se activan y desactivan: cero new/delete por frame.
+    spaceObjects.reserve(MAX_PROJECTILES + MAX_DEBRIS + MAX_DRONES);  // una sola reserva
+
+    for (std::unique_ptr<Projectile> &projectile : projectiles) {
+        projectile = std::make_unique<Projectile>(*scene);
+        spaceObjects.push_back(projectile.get());
     }
-
-    // --- Pool de basura espacial ---
-    // Forma de roca irregular, centrada en el origen. Todas comparten la forma,
-    // y al aparecer cada una se gira un ángulo al azar para que no se vean iguales.
-    // Los puntos están en proporción al radio: cambiar DEBRIS_RADIUS cambia
-    // el dibujo y el choque a la vez, así nunca quedan desiguales.
-    const double r = DEBRIS_RADIUS;
-    QPolygonF rockShape;
-    rockShape << QPointF(r, 0) << QPointF(0.45 * r, 0.85 * r) << QPointF(-0.55 * r, 0.85 * r)
-              << QPointF(-r, 0.15 * r) << QPointF(-0.55 * r, -0.85 * r) << QPointF(0.45 * r, -0.7 * r);
-
-    for (Debris &d : debris) {
-        d.item = scene->addPolygon(rockShape, Qt::NoPen, QColor(140, 130, 120)); // gris roca
-        d.item->hide();
+    for (std::unique_ptr<Debris> &rock : debris) {
+        rock = std::make_unique<Debris>(*scene);
+        spaceObjects.push_back(rock.get());
     }
-
-    // --- Pool de drones ---
-    // Forma de flecha apuntando a la derecha (ángulo 0), como la nave,
-    // para poder girarla en la dirección en que se mueve.
-    QPolygonF droneShape;
-    droneShape << QPointF(10, 0) << QPointF(0, 7) << QPointF(-8, 4)
-               << QPointF(-8, -4) << QPointF(0, -7);
-
-    for (Drone &drone : drones) {
-        drone.item = scene->addPolygon(droneShape, Qt::NoPen, DRONE_COLOR);
-        drone.item->hide();
+    for (std::unique_ptr<Drone> &drone : drones) {
+        // El dron guarda una referencia a la posición del satélite: siempre ve
+        // la posición actual sin que la ventana tenga que pasársela cada paso
+        drone = std::make_unique<Drone>(*scene, satellitePosition);
+        spaceObjects.push_back(drone.get());
     }
 
     createHud();
@@ -167,9 +150,14 @@ void OrbitWindow::updateGame()
             fireCooldown = FIRE_COOLDOWN;
         }
 
-        updateProjectiles(config::DT);
-        updateDebris(config::DT);
-        updateDrones(config::DT);
+        updateSpawners(config::DT);
+
+        // Un solo ciclo para todos: cada objeto se mueve a su manera
+        // (proyectil, roca o dron) según la clase real a la que apunta
+        for (SpaceObject *object : spaceObjects) {
+            if (object->isActive()) object->update(config::DT, physics);
+        }
+
         checkCollisions();
         accumulator -= config::DT;
 
@@ -181,20 +169,8 @@ void OrbitWindow::updateGame()
     ship->setPos(shipPosition.x, shipPosition.y);
     ship->setRotation(shipAngle);
 
-    for (Projectile &p : projectiles) {
-        if (p.active) p.item->setPos(p.position.x, p.position.y);
-    }
-
-    for (Debris &d : debris) {
-        if (d.active) d.item->setPos(d.position.x, d.position.y);
-    }
-
-    // Los drones apuntan hacia donde se mueven. atan2 se calcula aquí, una vez
-    // por frame, y no en cada paso de física: solo importa para el dibujo.
-    for (Drone &drone : drones) {
-        if (!drone.active) continue;
-        drone.item->setPos(drone.position.x, drone.position.y);
-        drone.item->setRotation(qRadiansToDegrees(std::atan2(drone.velocity.y, drone.velocity.x)));
+    for (SpaceObject *object : spaceObjects) {
+        if (object->isActive()) object->syncGraphics();
     }
 
     updateTrajectory();
@@ -204,45 +180,17 @@ void OrbitWindow::updateGame()
 // Activa el primer proyectil libre del pool. Si todos están en uso, no dispara.
 void OrbitWindow::fireProjectile()
 {
-    for (Projectile &p : projectiles) {
-        if (p.active) continue;
+    for (std::unique_ptr<Projectile> &projectile : projectiles) {
+        if (projectile->isActive()) continue;
 
         const double radians = qDegreesToRadians(shipAngle);
         const Vector2D direction(std::cos(radians), std::sin(radians));
 
         // Sale de la punta de la nave (12 px adelante del centro) y hereda
         // la velocidad de la nave: física real, como disparar desde algo en movimiento
-        p.position = shipPosition + direction * 12.0;
-        p.velocity = shipVelocity + direction * PROJECTILE_SPEED;
-        p.lifetime = PROJECTILE_LIFETIME;
-        p.active = true;
-
-        p.item->setPos(p.position.x, p.position.y);
-        p.item->show();
+        projectile->launch(shipPosition + direction * 12.0,
+                           shipVelocity + direction * Projectile::SPEED);
         return;
-    }
-}
-
-
-// Mueve los proyectiles activos con la misma gravedad y desactiva los que
-// chocan con la Tierra, salen de la pantalla o se les acaba el tiempo.
-void OrbitWindow::updateProjectiles(double dt)
-{
-    const double margin = 50.0; // px fuera de la pantalla antes de desactivarlo
-
-    for (Projectile &p : projectiles) {
-        if (!p.active) continue;
-
-        physics.step(p.position, p.velocity, dt);
-        p.lifetime -= dt;
-
-        const bool outOfScreen = p.position.x < -margin || p.position.x > config::WINDOW_WIDTH + margin
-                              || p.position.y < -margin || p.position.y > config::WINDOW_HEIGHT + margin;
-
-        if (p.lifetime <= 0.0 || outOfScreen || isInsideEarth(p.position)) {
-            p.active = false;
-            p.item->hide();
-        }
     }
 }
 
@@ -251,8 +199,8 @@ void OrbitWindow::updateProjectiles(double dt)
 // Gira en sentido contrario al satélite para que sus caminos se crucen.
 void OrbitWindow::spawnDebris()
 {
-    for (Debris &d : debris) {
-        if (d.active) continue;
+    for (std::unique_ptr<Debris> &rock : debris) {
+        if (rock->isActive()) continue;
 
         const double radius = randomRange(DEBRIS_MIN_ORBIT, DEBRIS_MAX_ORBIT);
         double angle = randomRange(0.0, 2.0 * M_PI);
@@ -270,32 +218,10 @@ void OrbitWindow::spawnDebris()
         // Entre 90% y 105% de la velocidad circular: órbita un poco ovalada,
         // así no todas se ven iguales.
         const double speed = physics.circularSpeed(radius) * randomRange(0.90, 1.05);
-        d.position = position;
-        d.velocity = Vector2D(-direction.y, direction.x) * speed;
-        d.active = true;
-
-        d.item->setRotation(randomRange(0.0, 360.0)); // solo al aparecer, no cada frame
-        d.item->setPos(d.position.x, d.position.y);
-        d.item->show();
+        rock->launch(position, Vector2D(-direction.y, direction.x) * speed, randomRange(0.0, 360.0));
         return;
     }
     // Pool lleno: no aparece nada hasta que se libere un espacio
-}
-
-
-// Mueve la basura activa y cuenta el tiempo para la siguiente.
-// La basura no se desactiva al salir de la pantalla: su órbita la trae de vuelta.
-void OrbitWindow::updateDebris(double dt)
-{
-    debrisTimer -= dt;
-    if (debrisTimer <= 0.0) {
-        spawnDebris();
-        debrisTimer = DEBRIS_SPAWN_INTERVAL;
-    }
-
-    for (Debris &d : debris) {
-        if (d.active) physics.step(d.position, d.velocity, dt);
-    }
 }
 
 
@@ -304,132 +230,87 @@ void OrbitWindow::updateDebris(double dt)
 // de 760 px queda completamente por fuera en cualquier dirección.
 void OrbitWindow::spawnDrone()
 {
-    for (Drone &drone : drones) {
-        if (drone.active) continue;
+    for (std::unique_ptr<Drone> &drone : drones) {
+        if (drone->isActive()) continue;
 
         const double angle = randomRange(0.0, 2.0 * M_PI);
-        drone.position = Vector2D(EARTH_X, EARTH_Y)
-                       + Vector2D(std::cos(angle), std::sin(angle)) * DRONE_SPAWN_DISTANCE;
-        drone.velocity = Vector2D();  // arranca quieto; su motor lo acelera
-        drone.health = DRONE_HEALTH;
-        drone.active = true;
-
-        drone.item->setBrush(DRONE_COLOR);
-        drone.item->setPos(drone.position.x, drone.position.y);
-        drone.item->show();
+        drone->launch(Vector2D(EARTH_X, EARTH_Y)
+                      + Vector2D(std::cos(angle), std::sin(angle)) * DRONE_SPAWN_DISTANCE);
         return;
     }
 }
 
 
-// Mueve los drones con gravedad + su motor, y cuenta el tiempo para el siguiente.
-void OrbitWindow::updateDrones(double dt)
+// Cuenta el tiempo para la siguiente basura y el siguiente dron
+void OrbitWindow::updateSpawners(double dt)
 {
+    debrisTimer -= dt;
+    if (debrisTimer <= 0.0) {
+        spawnDebris();
+        debrisTimer = DEBRIS_SPAWN_INTERVAL;
+    }
+
     droneTimer -= dt;
     if (droneTimer <= 0.0) {
         spawnDrone();
         droneTimer = DRONE_SPAWN_INTERVAL;
     }
-
-    for (Drone &drone : drones) {
-        if (drone.active) physics.step(drone.position, drone.velocity, dt, seekSatellite(drone));
-    }
-}
-
-
-// "Seek steering": el dron calcula la velocidad que le gustaría tener (directo al
-// satélite a velocidad máxima) y empuja para corregir la diferencia con la que tiene.
-// El empuje está limitado, así que no gira en seco: se pasa, corrige y hace curvas.
-// Costo: 2 raíces cuadradas por dron y por paso.
-Vector2D OrbitWindow::seekSatellite(const Drone &drone) const
-{
-    const Vector2D toTarget = satellitePosition - drone.position;
-    const double distance = toTarget.length();
-    if (distance < 1e-6) return Vector2D();  // ya está encima: evita dividir entre cero
-
-    const Vector2D desired = toTarget * (DRONE_MAX_SPEED / distance);
-    Vector2D steering = desired - drone.velocity;
-
-    const double strength = steering.length();
-    if (strength > DRONE_THRUST) {
-        steering = steering * (DRONE_THRUST / strength);  // recortar al empuje máximo
-    }
-    return steering;
 }
 
 
 // Revisa los choques del paso actual. Solo se comparan objetos activos.
-// Peor caso: 12 basuras x 32 disparos = 384 comparaciones, cada una son
-// 2 restas, 3 multiplicaciones y una suma. Sin raíces cuadradas.
+// Peor caso: (12 basuras + 6 drones) x 32 disparos = 576 comparaciones, cada una
+// son 2 restas, 3 multiplicaciones y una suma. Sin raíces cuadradas.
 void OrbitWindow::checkCollisions()
 {
     const Vector2D earthCenter(EARTH_X, EARTH_Y);
 
-    for (Debris &d : debris) {
-        if (!d.active) continue;
-
-        bool destroyed = false;
-
-        if (circlesOverlap(d.position, DEBRIS_RADIUS, earthCenter, EARTH_RADIUS)) {
-            destroyed = true; // se quema en la atmósfera
-        } else if (circlesOverlap(d.position, DEBRIS_RADIUS, satellitePosition, SATELLITE_RADIUS)) {
-            destroyed = true;
-            damageSatellite();
-        } else if (circlesOverlap(d.position, DEBRIS_RADIUS, shipPosition, SHIP_RADIUS)) {
-            destroyed = true;
-            damageShip();
-        } else {
-            for (Projectile &p : projectiles) {
-                if (!p.active) continue;
-                if (circlesOverlap(d.position, DEBRIS_RADIUS, p.position, PROJECTILE_RADIUS)) {
-                    p.active = false;
-                    p.item->hide();
-                    destroyed = true;
-                    break; // un disparo basta, no seguir revisando los demás
-                }
-            }
-        }
-
-        if (destroyed) {
-            d.active = false;
-            d.item->hide();
+    // Cualquier objeto que toque la Tierra se quema en la atmósfera
+    for (SpaceObject *object : spaceObjects) {
+        if (object->isActive() && object->overlaps(earthCenter, EARTH_RADIUS)) {
+            object->deactivate();
         }
     }
 
-    // Drones: chocar con algo los destruye; un disparo solo les quita vida.
-    for (Drone &drone : drones) {
-        if (!drone.active) continue;
+    // Basura: chocar con cualquier cosa la destruye
+    for (std::unique_ptr<Debris> &rock : debris) {
+        if (!rock->isActive()) continue;
 
-        bool destroyed = false;
-
-        if (circlesOverlap(drone.position, DRONE_RADIUS, earthCenter, EARTH_RADIUS)) {
-            destroyed = true;
-        } else if (circlesOverlap(drone.position, DRONE_RADIUS, satellitePosition, SATELLITE_RADIUS)) {
-            destroyed = true;
-            damageSatellite(DRONE_DAMAGE);
-        } else if (circlesOverlap(drone.position, DRONE_RADIUS, shipPosition, SHIP_RADIUS)) {
-            destroyed = true;
+        if (rock->overlaps(satellitePosition, SATELLITE_RADIUS)) {
+            rock->deactivate();
+            damageSatellite();
+        } else if (rock->overlaps(shipPosition, SHIP_RADIUS)) {
+            rock->deactivate();
             damageShip();
         } else {
-            for (Projectile &p : projectiles) {
-                if (!p.active) continue;
-                if (circlesOverlap(drone.position, DRONE_RADIUS, p.position, PROJECTILE_RADIUS)) {
-                    p.active = false;
-                    p.item->hide();
-
-                    --drone.health;
-                    destroyed = drone.health <= 0;
-                    if (!destroyed) {
-                        drone.item->setBrush(colorForHealth(DRONE_COLOR, drone.health, DRONE_HEALTH));
-                    }
-                    break;
+            for (std::unique_ptr<Projectile> &projectile : projectiles) {
+                if (projectile->isActive() && rock->overlaps(*projectile)) {
+                    projectile->deactivate();
+                    rock->deactivate();
+                    break;  // un disparo basta, no seguir revisando los demás
                 }
             }
         }
+    }
 
-        if (destroyed) {
-            drone.active = false;
-            drone.item->hide();
+    // Drones: chocar los destruye; un disparo solo les quita vida
+    for (std::unique_ptr<Drone> &drone : drones) {
+        if (!drone->isActive()) continue;
+
+        if (drone->overlaps(satellitePosition, SATELLITE_RADIUS)) {
+            drone->deactivate();
+            damageSatellite(Drone::DAMAGE);
+        } else if (drone->overlaps(shipPosition, SHIP_RADIUS)) {
+            drone->deactivate();
+            damageShip();
+        } else {
+            for (std::unique_ptr<Projectile> &projectile : projectiles) {
+                if (projectile->isActive() && drone->overlaps(*projectile)) {
+                    projectile->deactivate();
+                    drone->takeHit();
+                    break;
+                }
+            }
         }
     }
 
@@ -511,17 +392,8 @@ void OrbitWindow::restartGame()
     resetSatellite();
     resetShip();
 
-    for (Projectile &p : projectiles) {
-        p.active = false;
-        p.item->hide();
-    }
-    for (Debris &d : debris) {
-        d.active = false;
-        d.item->hide();
-    }
-    for (Drone &drone : drones) {
-        drone.active = false;
-        drone.item->hide();
+    for (SpaceObject *object : spaceObjects) {
+        object->deactivate();
     }
 
     fireCooldown = 0.0;
