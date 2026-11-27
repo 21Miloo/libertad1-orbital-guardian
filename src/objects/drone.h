@@ -13,6 +13,7 @@ class Drone : public SpaceObject {
 private:
     const Vector2D &target;  // posición que persigue (la del satélite); la actualiza la ventana
     int health = 0;
+    int originSector = -1;   // sector de Soundwave desde el que salió (para que aprenda)
 
     static QPolygonF arrowShape();
     Vector2D seek() const;
@@ -27,7 +28,9 @@ public:
     Drone(QGraphicsScene &scene, const Vector2D &targetPosition);
 
     // Aparece quieto en la posición dada, con la vida llena
-    void launch(const Vector2D &startPosition);
+    void launch(const Vector2D &startPosition, int sector);
+
+    int getOriginSector() const { return originSector; }
 
     // Recibe un disparo. Devuelve true si quedó destruido.
     bool takeHit();

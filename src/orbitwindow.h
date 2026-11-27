@@ -24,6 +24,7 @@
 #include "objects/projectile.h"
 #include "objects/debris.h"
 #include "objects/drone.h"
+#include "agent/soundwaveagent.h"
 
 
 
@@ -61,10 +62,9 @@ private:
     static constexpr double DEBRIS_MAX_ORBIT = 360.0;     // px
     static constexpr double SAFE_SPAWN_DISTANCE = 150.0;  // px, no aparecer encima del satélite
 
-    // Drones de Soundwave
+    // Drones y Soundwave
     static constexpr int MAX_DRONES = 6;                  // tamaño del pool
-    static constexpr double DRONE_SPAWN_INTERVAL = 8.0;   // s entre apariciones
-    static constexpr double DRONE_SPAWN_DISTANCE = 760.0; // px desde la Tierra: siempre fuera de pantalla
+    static constexpr double SOUNDWAVE_LEARNING_RATE = 0.3; // qué tan rápido aprende (0..1)
 
     // Vida y choques
     static constexpr double SHIP_RADIUS = 9.0;            // px, círculo que envuelve el triángulo
@@ -77,6 +77,7 @@ private:
     QGraphicsEllipseItem *earth;
     QGraphicsEllipseItem *satellite;
     QGraphicsPolygonItem *ship;
+    QGraphicsPolygonItem *soundwaveItem;  // dibujo de Soundwave
     QGraphicsPathItem *trajectory;  // línea de predicción de la nave
     QPainterPath trajectoryPath;    // se reutiliza cada frame: clear() conserva la memoria
 
@@ -84,6 +85,7 @@ private:
     OrbitalPhysics physics;
     Vector2D satellitePosition;
     Vector2D satelliteVelocity;
+    SoundwaveAgent soundwave; // agente inteligente: decide desde dónde atacar
     Vector2D shipPosition;   // px
     Vector2D shipVelocity;   // px/s
     double shipAngle = 90.0; // grados; 0 = derecha, 90 = abajo (y crece hacia abajo)
@@ -109,7 +111,6 @@ private:
 
     double fireCooldown = 0.0;                   // s que faltan para poder volver a disparar
     double debrisTimer = DEBRIS_SPAWN_INTERVAL;  // s que faltan para la siguiente basura
-    double droneTimer = DRONE_SPAWN_INTERVAL;    // s que faltan para el siguiente dron
 
     int satelliteHealth = SATELLITE_MAX_HEALTH;
     int shipHealth = SHIP_MAX_HEALTH;
@@ -118,6 +119,11 @@ private:
     // cambian de color al recibir daño; no se crea ni se escribe texto por frame.
     std::array<QGraphicsRectItem*, SATELLITE_MAX_HEALTH> satelliteBars;
     std::array<QGraphicsRectItem*, SHIP_MAX_HEALTH> shipBars;
+    // Memoria de Soundwave dibujada sobre su órbita: un arco por sector, más grueso
+    // y brillante cuanto mejor le ha ido atacando desde ahí. La forma de cada arco
+    // se calcula una sola vez; después solo cambia el lápiz (grosor y color), y
+    // solo cuando el agente decide o aprende, no cada frame.
+    std::array<QGraphicsPathItem*, SoundwaveAgent::SECTORS> memoryArcs;
     QGraphicsSimpleTextItem *gameOverTitle;
     QGraphicsSimpleTextItem *gameOverHint;
 
@@ -131,6 +137,7 @@ private:
     void spawnDebris();
     void spawnDrone();
     void updateSpawners(double dt);
+    void updateSoundwave(double dt);
     void checkCollisions();
     void damageSatellite(int amount = 1);
     void damageShip();
@@ -140,6 +147,8 @@ private:
     void restartGame();
     void createHud();
     void updateHealthBars();
+    void createMemoryArcs();
+    void updateMemoryArcs();
 
     static bool isInsideEarth(const Vector2D &position);
     static bool circlesOverlap(const Vector2D &a, double radiusA,

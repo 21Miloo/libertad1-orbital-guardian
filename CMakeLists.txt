@@ -24,6 +24,8 @@ qt_add_executable(libertad1 WIN32 MACOSX_BUNDLE
     src/objects/debris.h src/objects/debris.cpp
     src/objects/drone.h src/objects/drone.cpp
 
+    src/agent/soundwaveagent.h src/agent/soundwaveagent.cpp
+
 
 )
 

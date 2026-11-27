@@ -27,9 +27,10 @@ QPolygonF Drone::arrowShape()
 }
 
 
-void Drone::launch(const Vector2D &startPosition)
+void Drone::launch(const Vector2D &startPosition, int sector)
 {
     health = MAX_HEALTH;
+    originSector = sector;
     item->setBrush(DRONE_COLOR);
     activate(startPosition, Vector2D());  // arranca quieto; su motor lo acelera
 }
