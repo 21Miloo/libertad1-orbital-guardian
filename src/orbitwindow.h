@@ -7,6 +7,8 @@
 #include <QGraphicsEllipseItem>
 #include <QGraphicsPolygonItem>
 #include <QGraphicsPathItem>
+#include <QGraphicsRectItem>
+#include <QGraphicsSimpleTextItem>
 #include <QPainterPath>
 #include <QTimer>
 #include <QElapsedTimer>
@@ -117,6 +119,13 @@ private:
     int satelliteHealth = SATELLITE_MAX_HEALTH;
     int shipHealth = SHIP_MAX_HEALTH;
 
+    // HUD: una barrita por cada punto de vida. Se crean al iniciar y solo
+    // cambian de color al recibir daño; no se crea ni se escribe texto por frame.
+    std::array<QGraphicsRectItem*, SATELLITE_MAX_HEALTH> satelliteBars;
+    std::array<QGraphicsRectItem*, SHIP_MAX_HEALTH> shipBars;
+    QGraphicsSimpleTextItem *gameOverTitle;
+    QGraphicsSimpleTextItem *gameOverHint;
+
     // Bucle del juego. Por valor: sin heap, se destruyen con la ventana
     QTimer timer;              // despierta al juego cada TICK_MS
     QElapsedTimer clock;       // mide el tiempo real entre ticks
@@ -131,7 +140,11 @@ private:
     void damageSatellite();
     void damageShip();
     void resetShip();
+    void resetSatellite();
     void endGame();
+    void restartGame();
+    void createHud();
+    void updateHealthBars();
 
     static bool isInsideEarth(const Vector2D &position);
     static bool circlesOverlap(const Vector2D &a, double radiusA,
