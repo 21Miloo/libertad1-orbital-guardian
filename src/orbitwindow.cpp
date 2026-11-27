@@ -20,7 +20,8 @@ const QColor BAR_EMPTY_COLOR(60, 60, 70);    // barrita de vida perdida
 
 // Constructor
 OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D(config:: WINDOW_WIDTH / 2.0, config::WINDOW_HEIGHT / 2.0),
-              OrbitalPhysics::gmForOrbit(ORBIT_RADIUS, ORBIT_PERIOD)) {
+              OrbitalPhysics::gmForOrbit(ORBIT_RADIUS, ORBIT_PERIOD)),
+              soundwave(Vector2D(EARTH_X, EARTH_Y), SOUNDWAVE_LEARNING_RATE) {
 
     scene = new QGraphicsScene(this);
     scene->setItemIndexMethod(QGraphicsScene::NoIndex); //Optimizamos procesamiento -> Sin Arbol BSP
@@ -100,6 +101,17 @@ OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D
         spaceObjects.push_back(drone.get());
     }
 
+    // --- Memoria de Soundwave (arcos sobre su órbita) ---
+    createMemoryArcs();
+
+    // --- Soundwave ---
+    // Hexágono alargado apuntando a la derecha (ángulo 0); se gira para mirar a la Tierra
+    QPolygonF soundwaveShape;
+    soundwaveShape << QPointF(18, 0) << QPointF(8, 12) << QPointF(-12, 12)
+                   << QPointF(-18, 0) << QPointF(-12, -12) << QPointF(8, -12);
+    soundwaveItem = scene->addPolygon(soundwaveShape, Qt::NoPen, QColor(110, 60, 180));
+    soundwaveItem->setZValue(1);  // encima de la basura que pase por su órbita
+
     createHud();
 
     // Bucle del juego
@@ -151,6 +163,7 @@ void OrbitWindow::updateGame()
         }
 
         updateSpawners(config::DT);
+        updateSoundwave(config::DT);
 
         // Un solo ciclo para todos: cada objeto se mueve a su manera
         // (proyectil, roca o dron) según la clase real a la que apunta
@@ -172,6 +185,11 @@ void OrbitWindow::updateGame()
     for (SpaceObject *object : spaceObjects) {
         if (object->isActive()) object->syncGraphics();
     }
+
+    // Soundwave siempre mira hacia la Tierra (su ángulo + 180°)
+    const Vector2D soundwavePosition = soundwave.getPosition();
+    soundwaveItem->setPos(soundwavePosition.x, soundwavePosition.y);
+    soundwaveItem->setRotation(qRadiansToDegrees(soundwave.getAngle()) + 180.0);
 
     updateTrajectory();
 }
@@ -225,23 +243,21 @@ void OrbitWindow::spawnDebris()
 }
 
 
-// Activa un dron libre fuera de la pantalla, en una dirección al azar.
-// Las esquinas de la ventana están a ~734 px del centro, así que un círculo
-// de 760 px queda completamente por fuera en cualquier dirección.
+// Activa un dron libre en la posición de Soundwave, marcado con el sector
+// desde el que salió para poder avisarle al agente cómo le fue.
 void OrbitWindow::spawnDrone()
 {
     for (std::unique_ptr<Drone> &drone : drones) {
         if (drone->isActive()) continue;
 
-        const double angle = randomRange(0.0, 2.0 * M_PI);
-        drone->launch(Vector2D(EARTH_X, EARTH_Y)
-                      + Vector2D(std::cos(angle), std::sin(angle)) * DRONE_SPAWN_DISTANCE);
+        drone->launch(soundwave.getPosition(), soundwave.getTargetSector());
         return;
     }
+    // Pool lleno: Soundwave pierde este lanzamiento
 }
 
 
-// Cuenta el tiempo para la siguiente basura y el siguiente dron
+// Cuenta el tiempo para la siguiente basura
 void OrbitWindow::updateSpawners(double dt)
 {
     debrisTimer -= dt;
@@ -249,11 +265,21 @@ void OrbitWindow::updateSpawners(double dt)
         spawnDebris();
         debrisTimer = DEBRIS_SPAWN_INTERVAL;
     }
+}
 
-    droneTimer -= dt;
-    if (droneTimer <= 0.0) {
+
+// Ciclo del agente: percibe y decide solo cuando lo necesita (después de cada
+// lanzamiento), y actúa en cada paso (moverse por su órbita y lanzar).
+void OrbitWindow::updateSoundwave(double dt)
+{
+    if (soundwave.needsDecision()) {
+        soundwave.perceive(shipPosition, satellitePosition);
+        soundwave.decide();
+        updateMemoryArcs();  // resalta el arco del sector elegido
+    }
+
+    if (soundwave.act(dt)) {
         spawnDrone();
-        droneTimer = DRONE_SPAWN_INTERVAL;
     }
 }
 
@@ -265,7 +291,43 @@ void OrbitWindow::checkCollisions()
 {
     const Vector2D earthCenter(EARTH_X, EARTH_Y);
 
-    // Cualquier objeto que toque la Tierra se quema en la atmósfera
+    // Drones: chocar los destruye; un disparo solo les quita vida.
+    // Van primero para que Soundwave se entere de cómo terminó cada uno
+    // (incluso si se quema en la Tierra) antes del ciclo general.
+    for (std::unique_ptr<Drone> &drone : drones) {
+        if (!drone->isActive()) continue;
+
+        const int sector = drone->getOriginSector();
+
+        if (drone->overlaps(earthCenter, EARTH_RADIUS)) {
+            drone->deactivate();
+            soundwave.learn(sector, false);   // se perdió solo
+            updateMemoryArcs();
+        } else if (drone->overlaps(satellitePosition, SATELLITE_RADIUS)) {
+            drone->deactivate();
+            damageSatellite(Drone::DAMAGE);
+            soundwave.learn(sector, true);    // ataque exitoso
+            updateMemoryArcs();
+        } else if (drone->overlaps(shipPosition, SHIP_RADIUS)) {
+            drone->deactivate();
+            damageShip();
+            soundwave.learn(sector, false);   // la nave lo bloqueó
+            updateMemoryArcs();
+        } else {
+            for (std::unique_ptr<Projectile> &projectile : projectiles) {
+                if (projectile->isActive() && drone->overlaps(*projectile)) {
+                    projectile->deactivate();
+                    if (drone->takeHit()) {
+                        soundwave.learn(sector, false);  // lo derribaron
+                        updateMemoryArcs();
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    // Lo demás (disparos y basura) que toque la Tierra se quema en la atmósfera
     for (SpaceObject *object : spaceObjects) {
         if (object->isActive() && object->overlaps(earthCenter, EARTH_RADIUS)) {
             object->deactivate();
@@ -288,27 +350,6 @@ void OrbitWindow::checkCollisions()
                     projectile->deactivate();
                     rock->deactivate();
                     break;  // un disparo basta, no seguir revisando los demás
-                }
-            }
-        }
-    }
-
-    // Drones: chocar los destruye; un disparo solo les quita vida
-    for (std::unique_ptr<Drone> &drone : drones) {
-        if (!drone->isActive()) continue;
-
-        if (drone->overlaps(satellitePosition, SATELLITE_RADIUS)) {
-            drone->deactivate();
-            damageSatellite(Drone::DAMAGE);
-        } else if (drone->overlaps(shipPosition, SHIP_RADIUS)) {
-            drone->deactivate();
-            damageShip();
-        } else {
-            for (std::unique_ptr<Projectile> &projectile : projectiles) {
-                if (projectile->isActive() && drone->overlaps(*projectile)) {
-                    projectile->deactivate();
-                    drone->takeHit();
-                    break;
                 }
             }
         }
@@ -398,7 +439,7 @@ void OrbitWindow::restartGame()
 
     fireCooldown = 0.0;
     debrisTimer = DEBRIS_SPAWN_INTERVAL;
-    droneTimer = DRONE_SPAWN_INTERVAL;
+    soundwave.resetPosition();  // la memoria se conserva: recuerda la partida anterior
     accumulator = 0.0;
 
     gameOverTitle->hide();
@@ -482,6 +523,56 @@ void OrbitWindow::updateHealthBars()
     for (std::size_t i = 0; i < shipBars.size(); ++i) {
         const bool full = static_cast<int>(i) < shipHealth;
         shipBars[i]->setBrush(full ? SHIP_COLOR : BAR_EMPTY_COLOR);
+    }
+}
+
+
+// Crea los 8 arcos sobre la órbita de Soundwave, uno por sector de 45°.
+// Se deja un pequeño espacio entre arcos para que se distinga cada sector.
+// Los puntos se calculan aquí una sola vez; durante el juego la forma no cambia.
+void OrbitWindow::createMemoryArcs()
+{
+    const double sectorSpan = 2.0 * M_PI / SoundwaveAgent::SECTORS;  // 45° en radianes
+    const double gap = qDegreesToRadians(3.0);                       // espacio entre arcos
+    const int segments = 12;                                         // tramos rectos por arco
+    const double radius = SoundwaveAgent::ORBIT_RADIUS;
+
+    for (std::size_t s = 0; s < memoryArcs.size(); ++s) {
+        const double start = s * sectorSpan + gap / 2.0;
+        const double span = sectorSpan - gap;
+
+        QPainterPath arc;
+        for (int k = 0; k <= segments; ++k) {
+            const double a = start + span * k / segments;
+            const QPointF point(EARTH_X + radius * std::cos(a), EARTH_Y + radius * std::sin(a));
+            if (k == 0) arc.moveTo(point);
+            else arc.lineTo(point);
+        }
+
+        memoryArcs[s] = scene->addPath(arc, QPen(Qt::NoPen), Qt::NoBrush);
+        memoryArcs[s]->setZValue(-2);  // debajo de todo lo que se mueve
+    }
+    updateMemoryArcs();
+}
+
+
+// Grosor y brillo de cada arco = peso aprendido del sector.
+// El sector que Soundwave eligió para su próximo ataque se pinta más claro.
+void OrbitWindow::updateMemoryArcs()
+{
+    const std::array<double, SoundwaveAgent::SECTORS> &weights = soundwave.getWeights();
+
+    for (std::size_t s = 0; s < memoryArcs.size(); ++s) {
+        const double strength = weights[s] / SoundwaveAgent::MAX_WEIGHT;  // 0.1 .. 1.0
+        const bool chosen = static_cast<int>(s) == soundwave.getTargetSector();
+
+        QColor color = chosen ? QColor(220, 180, 255) : QColor(150, 90, 220);
+        color.setAlpha(qRound(50 + 190 * strength));  // tenue si falla, brillante si acierta
+
+        QPen pen(color);
+        pen.setWidthF(1.5 + 7.0 * strength);
+        pen.setCapStyle(Qt::FlatCap);  // bordes rectos: los espacios entre arcos se ven limpios
+        memoryArcs[s]->setPen(pen);
     }
 }
 
