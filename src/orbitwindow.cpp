@@ -20,7 +20,9 @@ const QColor TRANSMISSION_COLOR(120, 200, 255);
 }
 
 // Constructor
-OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D(config:: WINDOW_WIDTH / 2.0, config::WINDOW_HEIGHT / 2.0),
+OrbitWindow::OrbitWindow(const Inventory &playerInventory, QWidget *parent): QMainWindow{parent},
+              inventory(playerInventory),
+              physics(Vector2D(config:: WINDOW_WIDTH / 2.0, config::WINDOW_HEIGHT / 2.0),
               OrbitalPhysics::gmForOrbit(ORBIT_RADIUS, ORBIT_PERIOD)),
               soundwave(Vector2D(EARTH_X, EARTH_Y), settingsFor(Difficulty::Normal).learningRate) {
 
@@ -67,6 +69,15 @@ OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D
     QPolygonF shipShape;
     shipShape << QPointF(12, 0) << QPointF(-8, -7) << QPointF(-8, 7);
     ship = scene->addPolygon(shipShape, Qt::NoPen, SHIP_COLOR);
+
+    // Escudo: burbuja hija de la nave. Visible = cargado
+    QPen shieldPen(QColor(120, 220, 255, 200));
+    shieldPen.setWidthF(1.5);
+    shieldItem = new QGraphicsEllipseItem(-SHIELD_RADIUS, -SHIELD_RADIUS,
+                                          2 * SHIELD_RADIUS, 2 * SHIELD_RADIUS, ship);
+    shieldItem->setPen(shieldPen);
+    shieldItem->setBrush(QColor(120, 220, 255, 35));
+    shieldItem->hide();
     resetShip(); // posición y velocidad iniciales (la misma función se usa al reaparecer)
 
 
@@ -116,6 +127,7 @@ OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D
 
     createHud();
     createMenu();
+    applyUpgrades();     // HUD de mejoras visible ya desde el menú
     updateTrajectory();  // escena completa detrás del menú
 
     // Loop conectado pero detenido: arranca en startGame
@@ -153,7 +165,7 @@ void OrbitWindow::updateGame()
         Vector2D thrust;
         if (thrusting) {
             const double radians = qDegreesToRadians(shipAngle);
-            thrust = Vector2D(std::cos(radians), std::sin(radians)) * SHIP_THRUST;
+            thrust = Vector2D(std::cos(radians), std::sin(radians)) * shipThrust;
         }
 
         physics.step(shipPosition, shipVelocity, config::DT, thrust);
@@ -162,8 +174,10 @@ void OrbitWindow::updateGame()
         if (fireCooldown > 0.0) fireCooldown -= config::DT;
         if (firing && fireCooldown <= 0.0) {
             fireProjectile();
-            fireCooldown = FIRE_COOLDOWN;
+            fireCooldown = fireInterval;
         }
+
+        updateShield(config::DT);
 
         updateSpawners(config::DT);
         updateSoundwave(config::DT);
@@ -217,22 +231,69 @@ void OrbitWindow::updateTransmission(double dt)
 }
 
 
-// Activa el primer proyectil libre del pool. Si todos están en uso, no dispara.
+// Una ráfaga: una bala, o dos en abanico con el Blaster. Un solo sonido por ráfaga.
 void OrbitWindow::fireProjectile()
+{
+    if (doubleShot) {
+        launchProjectile(shipAngle - BLASTER_SPREAD);
+        launchProjectile(shipAngle + BLASTER_SPREAD);
+    } else {
+        launchProjectile(shipAngle);
+    }
+    audio.play(GameAudio::Effect::Shot);
+}
+
+
+// Primer proyectil libre del pool. Pool lleno: la bala se pierde, no se aloca.
+void OrbitWindow::launchProjectile(double angleDegrees)
 {
     for (std::unique_ptr<Projectile> &projectile : projectiles) {
         if (projectile->isActive()) continue;
 
-        const double radians = qDegreesToRadians(shipAngle);
+        const double radians = qDegreesToRadians(angleDegrees);
         const Vector2D direction(std::cos(radians), std::sin(radians));
 
-        // Sale de la punta de la nave (12 px adelante del centro) y hereda
-        // la velocidad de la nave: física real, como disparar desde algo en movimiento
+        // Sale de la punta y hereda la velocidad de la nave (marco inercial)
         projectile->launch(shipPosition + direction * 12.0,
                            shipVelocity + direction * Projectile::SPEED);
-        audio.play(GameAudio::Effect::Shot);
         return;
     }
+}
+
+
+// Traduce el inventario a parámetros de juego. Una vez por partida.
+void OrbitWindow::applyUpgrades()
+{
+    doubleShot = inventory.hasUpgrade(PlayerUpgrade::Blaster);
+    fireInterval = doubleShot ? BLASTER_FIRE_COOLDOWN : FIRE_COOLDOWN;
+    shipThrust = inventory.hasUpgrade(PlayerUpgrade::Booster) ? BOOSTER_THRUST : SHIP_THRUST;
+    hasShield = inventory.hasUpgrade(PlayerUpgrade::Shield);
+    shieldTimer = 0.0;
+    setShieldCharged(hasShield);
+
+    QStringList names;
+    if (doubleShot) names << QStringLiteral("BLÁSTER");
+    if (hasShield) names << QStringLiteral("ESCUDO");
+    if (shipThrust > SHIP_THRUST) names << QStringLiteral("PROPULSOR");
+    upgradesLabel->setText(names.isEmpty() ? QStringLiteral("SIN MEJORAS")
+                                           : names.join(QStringLiteral("  ·  ")));
+}
+
+
+// Recarga con cuenta regresiva; solo corre mientras el escudo está gastado
+void OrbitWindow::updateShield(double dt)
+{
+    if (!hasShield || shieldCharged) return;
+
+    shieldTimer -= dt;
+    if (shieldTimer <= 0.0) setShieldCharged(true);
+}
+
+
+void OrbitWindow::setShieldCharged(bool charged)
+{
+    shieldCharged = charged;
+    shieldItem->setVisible(charged);
 }
 
 
@@ -308,7 +369,7 @@ void OrbitWindow::updateSoundwave(double dt)
 
 
 // Revisa los choques del paso actual. Solo se comparan objetos activos.
-// Peor caso: (12 basuras + 6 drones) x 32 disparos = 576 comparaciones, cada una
+// Peor caso: (12 basuras + 6 drones) x 64 disparos = 1152 comparaciones, cada una
 // son 2 restas, 3 multiplicaciones y una suma. Sin raíces cuadradas.
 void OrbitWindow::checkCollisions()
 {
@@ -406,6 +467,14 @@ void OrbitWindow::damageSatellite(int amount)
 void OrbitWindow::damageShip()
 {
     if (shipHealth <= 0) return;
+
+    // El escudo absorbe el golpe completo y entra en recarga
+    if (shieldCharged) {
+        setShieldCharged(false);
+        shieldTimer = SHIELD_RECHARGE;
+        audio.play(GameAudio::Effect::Hit);
+        return;
+    }
 
     --shipHealth;
     audio.play(GameAudio::Effect::Hit);
@@ -518,6 +587,7 @@ void OrbitWindow::restartGame()
     gameOverTitle->hide();
     gameOverHint->hide();
 
+    applyUpgrades();
     state = GameState::Playing;
     audio.playGameMusic();
     clock.restart();  // si no, el primer tick mediría todo el tiempo que estuvo detenido
@@ -562,6 +632,14 @@ void OrbitWindow::createHud()
         shipBars[i]->setPos(barsX + i * (barWidth + barGap), 43);
         shipBars[i]->setZValue(hudZ);
     }
+
+    // Mejoras activas: fijas durante la partida
+    QFont upgradesFont;
+    upgradesFont.setPointSize(9);
+    upgradesLabel = scene->addSimpleText(QString(), upgradesFont);
+    upgradesLabel->setBrush(QColor(120, 220, 255));
+    upgradesLabel->setPos(20, 62);
+    upgradesLabel->setZValue(hudZ);
 
     // Transmisión: fondo fijo + relleno que crece
     const double transmissionX = (config::WINDOW_WIDTH - TRANSMISSION_BAR_WIDTH) / 2.0;

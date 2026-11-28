@@ -22,6 +22,7 @@
 #include "core/orbitalphysics.h"
 #include "core/constants.h"
 #include "core/difficulty.h"
+#include "core/inventory.h"
 #include "objects/projectile.h"
 #include "objects/debris.h"
 #include "objects/drone.h"
@@ -54,7 +55,7 @@ private:
     static constexpr double EARTH_Y = config::WINDOW_HEIGHT / 2.0;
 
     // Disparos
-    static constexpr int MAX_PROJECTILES = 32;           // tamaño del pool
+    static constexpr int MAX_PROJECTILES = 64;           // tamaño del pool; cubre el disparo doble
     static constexpr double FIRE_COOLDOWN = 0.2;         // s entre disparos (5 por segundo)
 
     // Basura espacial
@@ -63,6 +64,13 @@ private:
     static constexpr double DEBRIS_MIN_ORBIT = 240.0;     // px, cerca de la órbita del satélite
     static constexpr double DEBRIS_MAX_ORBIT = 360.0;     // px
     static constexpr double SAFE_SPAWN_DISTANCE = 150.0;  // px, no aparecer encima del satélite
+
+    // Mejoras de Bumblebee (vienen del inventario del nivel 1)
+    static constexpr double BLASTER_FIRE_COOLDOWN = 0.16; // s; dos balas por ráfaga
+    static constexpr double BLASTER_SPREAD = 6.0;         // grados a cada lado
+    static constexpr double BOOSTER_THRUST = 80.0;        // px/s²; supera la gravedad a 200 px (~67)
+    static constexpr double SHIELD_RADIUS = 17.0;         // px
+    static constexpr double SHIELD_RECHARGE = 15.0;       // s
 
     // Drones: su comportamiento lo define la dificultad
     static constexpr int MAX_DRONES = 6;                  // tamaño del pool
@@ -82,9 +90,21 @@ private:
     QGraphicsEllipseItem *earth;
     QGraphicsEllipseItem *satellite;
     QGraphicsPolygonItem *ship;
+    QGraphicsEllipseItem *shieldItem;     // hijo de la nave: la sigue sin setPos propio
     QGraphicsPolygonItem *soundwaveItem;  // dibujo de Soundwave
     QGraphicsPathItem *trajectory;  // línea de predicción de la nave
     QPainterPath trajectoryPath;    // se reutiliza cada frame: clear() conserva la memoria
+
+    // Solo lectura: el nivel 2 consulta, el nivel 1 es el dueño
+    const Inventory &inventory;
+
+    // Mejoras resueltas una vez por partida: el hot path lee valores, no consulta el inventario
+    double shipThrust = SHIP_THRUST;
+    double fireInterval = FIRE_COOLDOWN;
+    bool doubleShot = false;
+    bool hasShield = false;
+    bool shieldCharged = false;
+    double shieldTimer = 0.0;   // s hasta recargar
 
     //traemos nuestra fisica de la orbita la cual incluye la clase vector tambien. Son atributos de la clase
     OrbitalPhysics physics;
@@ -143,6 +163,7 @@ private:
     QGraphicsRectItem *transmissionFill;
     QGraphicsSimpleTextItem *transmissionLabel;
     QGraphicsSimpleTextItem *difficultyLabel;
+    QGraphicsSimpleTextItem *upgradesLabel;
 
     // Panel padre: un hide() apaga el menú entero; Qt libera los hijos
     QGraphicsRectItem *menuPanel;
@@ -159,6 +180,10 @@ private:
 
     void updateTrajectory();
     void fireProjectile();
+    void launchProjectile(double angleDegrees);
+    void applyUpgrades();
+    void updateShield(double dt);
+    void setShieldCharged(bool charged);
     void spawnDebris();
     void spawnDrone();
     void updateSpawners(double dt);
@@ -195,7 +220,7 @@ protected:
     void keyReleaseEvent(QKeyEvent *event) override;
 
 public:
-    explicit OrbitWindow(QWidget *parent = nullptr);
+    explicit OrbitWindow(const Inventory &playerInventory, QWidget *parent = nullptr);
 
 };
 
