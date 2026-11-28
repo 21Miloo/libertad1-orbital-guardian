@@ -1,11 +1,8 @@
 #include <QApplication>
-#include <QDebug>
-#include <stdexcept>
+#include <QMessageBox>
+#include <exception>
 
-
-#include "core/orbitalphysics.h"
-#include "core/constants.h"
-#include "mainwindow.h"
+#include "core/inventory.h"
 #include "orbitwindow.h"
 
 
@@ -13,47 +10,23 @@ int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
 
-    // Ventana del juego (nivel 1 de prueba: movimiento, disparos y rebote con e)
-    //MainWindow window;
-    //window.show();
+    // Red de seguridad: un invariante roto al construir el juego (invalid_argument,
+    // out_of_range) se reporta en vez de cerrar sin explicación.
+    // Ojo: Qt no garantiza propagar excepciones a través del event loop;
+    // dentro de los slots los datos ya vienen validados (tabla constexpr).
+    try {
+        // Inventario de prueba hasta integrar el nivel 1, que es quien lo llena
+        Inventory inventory;
+        inventory.unlockUpgrade(PlayerUpgrade::Blaster);
+        inventory.unlockUpgrade(PlayerUpgrade::Shield);
+        inventory.unlockUpgrade(PlayerUpgrade::Booster);
 
-
-    // Ventana del juego (nivel 2 de prueba)
-
-    OrbitWindow window;
-    window.show();
-
-
-
-    // ===== Prueba de OrbitalPhysics =====
-    const double radius = 300.0;
-    const double period = 20.0;
-
-    // TÚ: calcula gm usando el método static gmForOrbit
-    double gm = OrbitalPhysics::gmForOrbit(radius, period);
-
-    // TÚ: crea el objeto OrbitalPhysics con centro (640, 360) y ese gm
-    OrbitalPhysics physics(Vector2D(640, 360), gm);
-
-    // TÚ: posición inicial (centro + 300 en x) y velocidad inicial (0, -circularSpeed)
-    Vector2D position(640 + 300, 360);
-    Vector2D velocity(0, - physics.circularSpeed(radius));
-
-    const int totalSteps = static_cast<int>(period / config::DT);   // 2400
-
-    for (int i = 0; i <= totalSteps; ++i) {
-        // Cada 600 pasos (= 5 segundos) imprime el estado
-        if (i % 600 == 0) {
-            Vector2D fromCenter = position - Vector2D(640, 360);
-            qDebug() << "t =" << i * config::DT << "s"
-                     << " pos = (" << position.x << "," << position.y << ")"
-                     << " distancia =" << fromCenter.length();
-        }
-
-        // TÚ: avanza la física un paso con physics.step(...)
-        physics.step(position, velocity, config::DT);
-
+        OrbitWindow window(inventory);
+        window.show();
+        return app.exec();
+    } catch (const std::exception &error) {
+        QMessageBox::critical(nullptr, QStringLiteral("Libertad-1"),
+                              QStringLiteral("Error inesperado:\n") + QString::fromUtf8(error.what()));
+        return 1;
     }
-
-    return app.exec();
 }
