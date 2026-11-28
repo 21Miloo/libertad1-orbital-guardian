@@ -26,6 +26,7 @@
 #include "objects/debris.h"
 #include "objects/drone.h"
 #include "agent/soundwaveagent.h"
+#include "audio/gameaudio.h"
 
 
 
@@ -148,6 +149,8 @@ private:
 
     QGraphicsSimpleTextItem *gameOverTitle;
     QGraphicsSimpleTextItem *gameOverHint;
+
+    GameAudio audio;
 
     // Bucle del juego. Por valor: sin heap, se destruyen con la ventana
     QTimer timer;              // despierta al juego cada TICK_MS

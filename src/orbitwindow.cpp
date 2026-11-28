@@ -121,6 +121,8 @@ OrbitWindow::OrbitWindow(QWidget *parent): QMainWindow{parent}, physics(Vector2D
     // Loop conectado pero detenido: arranca en startGame
     timer.setTimerType(Qt::PreciseTimer); // CoarseTimer puede atrasarse hasta un 5%
     connect(&timer, &QTimer::timeout, this, &OrbitWindow::updateGame);
+
+    audio.playMenuMusic();
 }
 
 
@@ -228,6 +230,7 @@ void OrbitWindow::fireProjectile()
         // la velocidad de la nave: física real, como disparar desde algo en movimiento
         projectile->launch(shipPosition + direction * 12.0,
                            shipVelocity + direction * Projectile::SPEED);
+        audio.play(GameAudio::Effect::Shot);
         return;
     }
 }
@@ -338,6 +341,7 @@ void OrbitWindow::checkCollisions()
                 if (projectile->isActive() && drone->overlaps(*projectile)) {
                     projectile->deactivate();
                     if (drone->takeHit()) {
+                        audio.play(GameAudio::Effect::Explosion);
                         soundwave.learn(sector, false);  // lo derribaron
                         updateMemoryArcs();
                     }
@@ -369,6 +373,7 @@ void OrbitWindow::checkCollisions()
                 if (projectile->isActive() && rock->overlaps(*projectile)) {
                     projectile->deactivate();
                     rock->deactivate();
+                    audio.play(GameAudio::Effect::Explosion);
                     break;  // un disparo basta, no seguir revisando los demás
                 }
             }
@@ -390,6 +395,7 @@ void OrbitWindow::damageSatellite(int amount)
     if (satelliteHealth <= 0) return;
 
     satelliteHealth = std::max(0, satelliteHealth - amount); // nunca por debajo de 0
+    audio.play(GameAudio::Effect::Hit);
     satellite->setBrush(colorForHealth(SATELLITE_COLOR, satelliteHealth, SATELLITE_MAX_HEALTH));
     updateHealthBars();
 
@@ -402,6 +408,7 @@ void OrbitWindow::damageShip()
     if (shipHealth <= 0) return;
 
     --shipHealth;
+    audio.play(GameAudio::Effect::Hit);
     ship->setBrush(colorForHealth(SHIP_COLOR, shipHealth, SHIP_MAX_HEALTH));
     updateHealthBars();
 
@@ -437,6 +444,9 @@ void OrbitWindow::endGame(bool victory)
     timer.stop();
     state = GameState::Over;
 
+    audio.stopMusic();
+    audio.play(victory ? GameAudio::Effect::Victory : GameAudio::Effect::Defeat);
+
     gameOverTitle->setText(victory ? QStringLiteral("MISIÓN CUMPLIDA") : QStringLiteral("MISIÓN FALLIDA"));
     gameOverTitle->setBrush(victory ? QColor(80, 220, 120) : QColor(220, 40, 40));
     gameOverTitle->setPos((config::WINDOW_WIDTH - gameOverTitle->boundingRect().width()) / 2.0,
@@ -471,6 +481,7 @@ void OrbitWindow::showMenu()
 {
     timer.stop();
     state = GameState::Menu;
+    audio.playMenuMusic();
     gameOverTitle->hide();
     gameOverHint->hide();
     menuPanel->show();
@@ -508,6 +519,7 @@ void OrbitWindow::restartGame()
     gameOverHint->hide();
 
     state = GameState::Playing;
+    audio.playGameMusic();
     clock.restart();  // si no, el primer tick mediría todo el tiempo que estuvo detenido
     timer.start(config::TICK_MS);
 }
