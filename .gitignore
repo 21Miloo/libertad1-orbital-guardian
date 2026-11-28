@@ -35,3 +35,6 @@ Thumbs.db
 
 # Crash dumps
 *.stackdump
+
+# Audio original sin recortar (pesado): solo se suben las versiones procesadas
+recursos/audio/fuentes/
